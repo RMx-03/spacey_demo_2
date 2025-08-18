@@ -27,6 +27,17 @@ router.get('/spacey', (req, res) => {
   });
 });
 
+// Health check endpoint
+router.get('/status', (req, res) => {
+  res.json({
+    status: "healthy",
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    memory: process.memoryUsage(),
+    service: "Spacey Chat API"
+  });
+});
+
 // GET route for fetching user personality traits
 router.get('/traits/:userId', getUserTraits);
 

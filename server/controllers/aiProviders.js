@@ -11,6 +11,11 @@ class AIProviderManager {
       huggingface: this.setupHuggingFace(),
     };
     
+    // Response caching for performance
+    this.responseCache = new Map();
+    this.maxCacheSize = 100;
+    this.cacheExpiryTime = 5 * 60 * 1000; // 5 minutes
+    
     // Get the default provider from environment, no fallbacks
     this.defaultProvider = process.env.DEFAULT_AI_PROVIDER || 'gemini';
     
@@ -218,8 +223,17 @@ class AIProviderManager {
     return available;
   }
 
-  // Generate response using specified provider - NO FALLBACKS
+  // Generate response using specified provider with caching
   async generateResponse(prompt, providerName = null) {
+    const cacheKey = this.generateCacheKey(prompt, providerName);
+    
+    // Check cache first
+    const cached = this.getCachedResponse(cacheKey);
+    if (cached) {
+      console.log(`⚡ Cache hit for ${providerName || this.defaultProvider} response`);
+      return cached;
+    }
+    
     console.log(`🎯 Attempting to generate response with ${providerName || this.defaultProvider}`);
     
     const targetProvider = providerName ? 
@@ -235,11 +249,58 @@ class AIProviderManager {
       console.log(`🚀 Using ${targetProvider.name} to generate response`);
       const response = await targetProvider.generate(prompt);
       console.log(`✅ Successfully generated response using ${targetProvider.name}`);
+      
+      // Cache the response
+      this.cacheResponse(cacheKey, response);
+      
       return response;
     } catch (error) {
       console.error(`❌ ${targetProvider.name} failed:`, error.message);
       throw new Error(`AI generation failed: ${error.message}`);
     }
+  }
+
+  // Generate cache key from prompt and provider
+  generateCacheKey(prompt, providerName) {
+    const normalizedPrompt = prompt.toLowerCase().trim();
+    // Use first 100 chars + hash of full prompt for cache key
+    const shortPrompt = normalizedPrompt.substring(0, 100);
+    const hash = require('crypto').createHash('md5').update(normalizedPrompt).digest('hex').substring(0, 8);
+    return `${providerName || this.defaultProvider}_${shortPrompt}_${hash}`;
+  }
+
+  // Get cached response if valid
+  getCachedResponse(cacheKey) {
+    const cached = this.responseCache.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp) < this.cacheExpiryTime) {
+      return cached.response;
+    }
+    
+    // Remove expired cache
+    if (cached) {
+      this.responseCache.delete(cacheKey);
+    }
+    
+    return null;
+  }
+
+  // Cache response with LRU eviction
+  cacheResponse(cacheKey, response) {
+    // Don't cache very long responses (likely dynamic content)
+    if (response.length > 5000) {
+      return;
+    }
+    
+    // LRU eviction
+    if (this.responseCache.size >= this.maxCacheSize) {
+      const firstKey = this.responseCache.keys().next().value;
+      this.responseCache.delete(firstKey);
+    }
+    
+    this.responseCache.set(cacheKey, {
+      response,
+      timestamp: Date.now()
+    });
   }
 
   // Get provider info

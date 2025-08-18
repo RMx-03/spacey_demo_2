@@ -109,7 +109,14 @@ const chatWithAI = async (req, res) => {
         };
 
         console.log('🚀 Routing to AI Orchestrator:', orchestratorType);
-        const response = await aiOrchestrator.processRequest(orchestratorRequest);
+        
+        // Add timeout protection to prevent connection resets
+        const response = await Promise.race([
+            aiOrchestrator.processRequest(orchestratorRequest),
+            new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Request timeout - taking too long to process')), 30000) // 30 second timeout
+            )
+        ]);
 
         // Format response for existing API consumers
         const apiResponse = {
@@ -136,6 +143,19 @@ const chatWithAI = async (req, res) => {
 
     } catch (error) {
         console.error('❌ Orchestrator error:', error);
+        
+        // Handle timeout errors specifically
+        if (error.message.includes('timeout')) {
+            return res.status(408).json({ 
+                error: "Houston, we're experiencing some communication delays! Let me try a quicker response for you.",
+                debug: { 
+                    error: 'Request timeout',
+                    timestamp: new Date().toISOString(),
+                    orchestrator: true
+                }
+            });
+        }
+        
         return res.status(500).json({ 
             error: "I encountered a cosmic anomaly while processing your request. Let me recalibrate...",
             debug: { 

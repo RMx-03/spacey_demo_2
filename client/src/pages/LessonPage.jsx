@@ -32,16 +32,210 @@ import { db, auth } from '../firebaseConfig';  // Import Firebase services
 import { doc, setDoc, getDoc, Timestamp } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth'; // Listen for auth changes
 import CameraFeed from '../components/ui/CameraFeed';
-import { hasLessonAccess, isLessonCompleted } from '../utils/lessonProgression';
+import { hasLessonAccess, isLessonCompleted, LESSON_METADATA } from '../utils/lessonProgression';
+import LessonGenerationStatus from '../components/lessons/LessonGenerationStatus';
+import DynamicLessonCanvas from '../components/lessons/DynamicLessonCanvas';
 
 
-const fetchLessonData = async (lessonId) => {
+// Enhanced lesson loading with dynamic generation support
+const fetchLessonData = async (lessonId, currentUser, forceStatic = false) => {
+  console.log(`🎯 Loading lesson: ${lessonId} for user: ${currentUser?.uid || 'anonymous'}`);
+  
+  // Check for cached dynamic lesson first
+  if (lessonId.startsWith('dynamic_')) {
+    const cachedLesson = localStorage.getItem(`dynamic_lesson_${lessonId}`);
+    if (cachedLesson) {
+      try {
+        const parsedLesson = JSON.parse(cachedLesson);
+        console.log('📦 Loading cached dynamic lesson:', parsedLesson.title);
+        return parsedLesson;
+      } catch (error) {
+        console.warn('⚠️ Failed to parse cached lesson, will regenerate:', error);
+        localStorage.removeItem(`dynamic_lesson_${lessonId}`);
+      }
+    }
+  }
+  
+  // Check if we should use dynamic generation (DEFAULT TO TRUE for all lessons)
+  const dynamicGenerationDisabled = localStorage.getItem('disable_dynamic_lessons') === 'true';
+  const shouldUseDynamicGeneration = !forceStatic && !dynamicGenerationDisabled && currentUser?.uid && (
+    // Enable dynamic generation for ALL lessons by default
+    true || 
+    // Keep original logic as fallback options
+    lessonId.startsWith('dynamic_') || 
+    lessonId.includes('personalized') ||
+    lessonId.startsWith('enhanced_')
+  );
+
+  if (shouldUseDynamicGeneration) {
+    try {
+      console.log(`🔥 Generating dynamic lesson for ${lessonId}`);
+      const dynamicLesson = await generateDynamicLesson(lessonId, currentUser);
+      if (dynamicLesson) {
+        console.log('✅ Successfully generated dynamic lesson');
+        return dynamicLesson;
+      }
+    } catch (error) {
+      console.warn('⚠️ Dynamic lesson generation failed, trying enhanced static lesson:', error);
+    }
+  }
+
+  // Fallback 1: Try to load and enhance existing static lesson
+  try {
+    const staticLesson = await loadStaticLesson(lessonId);
+    if (staticLesson) {
+      if (currentUser?.uid && !forceStatic) {
+        console.log(`🎨 Enhancing static lesson with personalization`);
+        try {
+          const enhancedLesson = await enhanceStaticLesson(staticLesson, currentUser);
+          if (enhancedLesson) {
+            console.log('✅ Successfully enhanced static lesson');
+            return enhancedLesson;
+          }
+        } catch (enhanceError) {
+          console.warn('⚠️ Enhancement failed, using plain static lesson:', enhanceError);
+        }
+      }
+      console.log('📄 Using static lesson as final fallback');
+      return staticLesson;
+    }
+  } catch (error) {
+    console.error("Failed to load static lesson:", error);
+  }
+
+  // Fallback 2: Last resort dynamic generation attempt
+  if (currentUser?.uid && !forceStatic) {
+    console.log(`🚀 Final attempt: Creating new dynamic lesson for ${lessonId}`);
+    try {
+      const finalDynamicLesson = await generateDynamicLesson(lessonId, currentUser);
+      if (finalDynamicLesson) {
+        console.log('✅ Final dynamic lesson generation succeeded');
+        return finalDynamicLesson;
+      }
+    } catch (genError) {
+      console.error("Final dynamic generation attempt failed:", genError);
+    }
+  }
+    
+  return null;
+};
+
+// Load static lesson from JSON files
+const loadStaticLesson = async (lessonId) => {
   try {
     const lessonModule = await import(`../../public/lessons/${lessonId}.json`);
     return lessonModule.default;
   } catch (error) {
-    console.error("Failed to load lesson data:", error);
+    console.error(`Static lesson ${lessonId} not found:`, error);
     return null;
+  }
+};
+
+// Generate completely new dynamic lesson
+const generateDynamicLesson = async (lessonId, currentUser) => {
+  console.log(`🎯 Generating dynamic lesson for ${lessonId}`);
+  
+  // Get lesson metadata for context
+  const lessonMeta = LESSON_METADATA[lessonId] || {
+    title: lessonId.replace(/[-_]/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+    description: `Dynamic lesson about ${lessonId}`,
+    difficulty: 'adaptive',
+    estimatedTime: '20-25 min'
+  };
+
+  const lessonRequest = {
+    baseTopicOrLesson: lessonId,
+    learningObjectives: [
+      `Understand key concepts of ${lessonMeta.title}`,
+      `Apply knowledge practically`,
+      `Connect to real-world space exploration`
+    ],
+    difficultyLevel: lessonMeta.difficulty?.toLowerCase() || 'adaptive',
+    estimatedDuration: parseInt(lessonMeta.estimatedTime) || 20,
+    focusAreas: [lessonMeta.title],
+    customRequirements: lessonMeta.description
+  };
+
+  const response = await fetch('/api/dynamic-lessons/generate', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      user: {
+        id: currentUser.uid,
+        name: currentUser.displayName || currentUser.email || 'Explorer',
+        email: currentUser.email || 'anonymous@example.com'
+      },
+      lessonRequest
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Dynamic lesson generation failed: ${response.status}`);
+  }
+
+  const result = await response.json();
+  console.log('✅ Dynamic lesson generated successfully:', result.lesson?.title);
+  
+  return result.lesson;
+};
+
+// Enhance static lesson with personalization
+const enhanceStaticLesson = async (staticLesson, currentUser) => {
+  try {
+    console.log(`🎨 Enhancing lesson: ${staticLesson.title}`);
+    
+    const response = await fetch('/api/dynamic-lessons/adapt', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        user: {
+          id: currentUser.uid,
+          name: currentUser.displayName || currentUser.email || 'Explorer',
+          email: currentUser.email || 'anonymous@example.com'
+        },
+        currentLesson: staticLesson,
+        adaptationRequest: {
+          type: 'enhancement',
+          reason: 'Personalizing static lesson content'
+        }
+      })
+    });
+
+    if (response.ok) {
+      const result = await response.json();
+      if (result.adaptedContent || result.strategy) {
+        console.log('✅ Lesson enhanced with personalization');
+        
+        // Apply enhancements to the lesson
+        const enhancedLesson = { ...staticLesson };
+        
+        // Add personalization metadata
+        enhancedLesson.personalization_applied = true;
+        enhancedLesson.adaptation_strategy = result.strategy;
+        enhancedLesson.enhanced_at = new Date().toISOString();
+        
+        // Enhance blocks with personalized instructions if available
+        if (result.strategy?.actions?.immediate_actions) {
+          enhancedLesson.blocks = enhancedLesson.blocks.map(block => ({
+            ...block,
+            personalized_guidance: result.strategy.actions.immediate_actions.primary_action?.content,
+            tutoring_approach: result.strategy.methodology?.primary_methodology?.approach
+          }));
+        }
+        
+        return enhancedLesson;
+      }
+    }
+    
+    console.log('ℹ️ Enhancement API call failed, using static lesson');
+    return staticLesson;
+  } catch (error) {
+    console.warn('⚠️ Lesson enhancement failed:', error);
+    return staticLesson;
   }
 };
 
@@ -59,6 +253,7 @@ const LessonPage = () => {
   const [userTags, setUserTags] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [isGeneratingLesson, setIsGeneratingLesson] = useState(false);
   const [isDebuggerOpen, setIsDebuggerOpen] = useState(false);
   const [lastAnalysis, setLastAnalysis] = useState(null);
 
@@ -139,7 +334,7 @@ const LessonPage = () => {
     setEmotionData(emotionInfo);
   }, []);
 
-  const loadLesson = useCallback(() => {
+  const loadLesson = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     setBackendAiMessage(null);
@@ -147,8 +342,43 @@ const LessonPage = () => {
     setPageState('idle');
     setPendingNavigation(null);
     setAnalysisLog([]);
-    fetchLessonData(lessonId).then(data => {
+    
+    try {
+      console.log(`🚀 Loading lesson ${lessonId} with enhanced AI system`);
+      
+      // Set generation status for dynamic lessons
+      const dynamicGenerationDisabled = localStorage.getItem('disable_dynamic_lessons') === 'true';
+      const shouldUseDynamic = !dynamicGenerationDisabled && currentUser?.uid;
+      
+      if (shouldUseDynamic) {
+        setIsGeneratingLesson(true);
+      }
+      
+      const data = await fetchLessonData(lessonId, currentUser);
+      
       if (data && data.blocks && data.blocks.length > 0) {
+        console.log(`✅ Lesson loaded: ${data.title} (${data.blocks.length} blocks)`);
+        
+        // Check if this is a dynamically generated or enhanced lesson
+        if (data.personalization_applied || data.generated_at) {
+          console.log(`🎯 AI-Enhanced lesson loaded with ${data.personalization_applied ? 'personalization' : 'dynamic generation'}`);
+          
+          // Show enhancement notification to user
+          if (data.personalization_applied) {
+            setBackendAiMessage({
+              type: 'enhancement',
+              message: `🎯 This lesson has been personalized using AI based on your learning profile! The tutoring approach is: ${data.adaptation_strategy?.methodology?.primary_methodology?.approach || 'adaptive'}.`,
+              timestamp: new Date().toISOString()
+            });
+          } else if (data.generated_at) {
+            setBackendAiMessage({
+              type: 'generation',
+              message: `🚀 This is a dynamically generated lesson created specifically for you! It includes ${data.blocks.length} personalized learning blocks.`,
+              timestamp: new Date().toISOString()
+            });
+          }
+        }
+        
         setLesson(data);
         setCurrentBlockId(data.blocks[0].block_id);
         setUserTags([]);
@@ -156,10 +386,15 @@ const LessonPage = () => {
       } else {
         setError(`Mission "${lessonId}" not found or is invalid.`);
       }
-      setIsLoading(false);
-      setHasStarted(false);
-    });
-  }, [lessonId]);
+    } catch (error) {
+      console.error('❌ Failed to load lesson:', error);
+      setError(`Failed to load mission "${lessonId}". ${error.message}`);
+    }
+    
+    setIsLoading(false);
+    setIsGeneratingLesson(false);
+    setHasStarted(false);
+  }, [lessonId, currentUser]);
 
   useEffect(() => {
     if (lessonId) {
@@ -503,6 +738,24 @@ Format your response to include both immediate feedback and any trait analysis.`
   }, []);
 
   const renderLessonFlow = () => {
+    // Check if this is a dynamic lesson and use the canvas
+    if (lesson?.personalization_applied || lesson?.generated_at) {
+      return (
+        <DynamicLessonCanvas
+          lesson={lesson}
+          currentBlockId={currentBlockId}
+          onBlockChange={(blockId) => {
+            setCurrentBlockId(blockId);
+            saveLessonProgress(blockId, userTags, currentMediaIndex, chatHistory);
+          }}
+          onUserChoice={handleChoice}
+          onSendMessage={handleSendMessage}
+          chatHistory={chatHistory}
+        />
+      );
+    }
+
+    // Default lesson flow for static lessons
     switch (pageState) {
       case 'thinking':
         return (
@@ -702,8 +955,64 @@ Format your response to include both immediate feedback and any trait analysis.`
     setChatHistory(newHistory);
     saveLessonProgress(currentBlockId, userTags, currentMediaIndex, newHistory); // Save user message immediately
 
-      try {
-      // Use the main AI conversation manager with lesson context
+    try {
+      console.log('🎓 Using enhanced tutoring system for lesson chat');
+      
+      // Use enhanced tutoring system if user is logged in
+      if (currentUser?.uid && lesson) {
+        try {
+          const response = await fetch('/api/dynamic-lessons/tutoring/enhanced', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              user: {
+                id: currentUser.uid,
+                name: currentUser.displayName || currentUser.email || 'Explorer',
+                email: currentUser.email || 'anonymous@example.com'
+              },
+              prompt: message,
+              context: {
+                lessonContext: {
+                  title: lesson.title,
+                  mission_id: lesson.mission_id,
+                  currentBlock: currentBlock,
+                  userTags,
+                  personalizationApplied: lesson.personalization_applied,
+                  adaptationStrategy: lesson.adaptation_strategy
+                },
+                currentTopic: currentBlock?.learning_goal || lesson.title,
+                tutoringStyle: lesson.tutoring_approach || 'adaptive',
+                immediateNeed: 'lesson_support'
+              }
+            })
+          });
+
+          if (response.ok) {
+            const result = await response.json();
+            console.log(`✅ Enhanced tutoring response received (${result.methodology})`);
+            
+            newHistory = [...newHistory, { 
+              sender: 'ai', 
+              content: result.message,
+              metadata: {
+                tutoring_methodology: result.methodology,
+                enhanced: true,
+                confidence: result.metadata?.personalization_confidence
+              }
+            }];
+            
+            setChatHistory(newHistory);
+            saveLessonProgress(currentBlockId, userTags, currentMediaIndex, newHistory);
+            return;
+          }
+        } catch (enhancedError) {
+          console.warn('⚠️ Enhanced tutoring failed, falling back to standard chat:', enhancedError);
+        }
+      }
+
+      // Fallback to standard chat system with enhanced lesson context
       const enhancedPrompt = `${message}
 
 [LESSON CONTEXT]
@@ -712,6 +1021,8 @@ Current Block: "${currentBlock?.content}"
 Block Type: ${currentBlock?.type}
 Learning Goal: ${currentBlock?.learning_goal}
 User Traits: ${userTags.join(', ')}
+${lesson?.personalization_applied ? '[PERSONALIZED LESSON]' : ''}
+${lesson?.tutoring_approach ? `Tutoring Approach: ${lesson.tutoring_approach}` : ''}
 
 As Spacey, the AI tutor for this space mission, provide storytelling explanations with:
 - Real examples from space exploration
@@ -719,10 +1030,11 @@ As Spacey, the AI tutor for this space mission, provide storytelling explanation
 - Engaging narratives that connect to the lesson topic
 - Clear, educational guidance
 - Encouragement and curiosity-building
+${lesson?.personalization_applied ? '- Personalized responses based on user learning profile' : ''}
 
 Respond as if you're right there with the user during their mission.`;
 
-      // Route through main AI system instead of separate lesson controller
+      // Route through main AI system as fallback
       const response = await handleUserChat(enhancedPrompt, currentUser);
       
       if (response?.message) {
@@ -756,6 +1068,28 @@ Respond as if you're right there with the user during their mission.`;
           ) : null
         }
       />
+
+      {/* Show lesson generation status */}
+      {currentUser && (
+        <div className="relative z-10 container mx-auto px-4 pt-4">
+          <LessonGenerationStatus 
+            isGenerating={isGeneratingLesson}
+            onToggleDynamic={(enabled) => {
+              if (!enabled && lesson?.personalization_applied) {
+                // Reload lesson with static content
+                setIsLoading(true);
+                fetchLessonData(lessonId, currentUser, true).then(staticLesson => {
+                  if (staticLesson) {
+                    setLesson(staticLesson);
+                    setCurrentBlockId(staticLesson.blocks?.[0]?.block_id || null);
+                  }
+                  setIsLoading(false);
+                });
+              }
+            }}
+          />
+        </div>
+      )}
       
       <DebugPanel 
         isOpen={isDebuggerOpen}

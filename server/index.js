@@ -4,6 +4,7 @@ const dotenv = require('dotenv');
 dotenv.config();
 
 const chatRoutes = require('./routes/chatRoutes');
+const dynamicLessonsRoutes = require('./routes/dynamicLessons');
 
 
 const app = express();
@@ -30,6 +31,7 @@ app.get('/', (req, res) => {
 
 // Routes
 app.use('/api/chat', chatRoutes);
+app.use('/api/dynamic-lessons', dynamicLessonsRoutes);
 
 // Global error handler
 app.use((error, req, res, next) => {
@@ -55,5 +57,6 @@ process.on('uncaughtException', (error) => {
 const PORT = process.env.PORT || 5000; // Use PORT from .env or default to 5000
 app.listen(PORT, () => {
     console.log(`🚀 Spacey Tutor server running on port ${PORT}`);
-    console.log(`📡 API available at http://localhost:${PORT}/api/chat`);
+    console.log(`📡 Chat API available at http://localhost:${PORT}/api/chat`);
+    console.log(`🎯 Dynamic Lessons API available at http://localhost:${PORT}/api/dynamic-lessons`);
 });

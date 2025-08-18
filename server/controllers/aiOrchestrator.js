@@ -7,6 +7,9 @@ const { conversationMemory } = require('./conversationMemory');
 const { extractAndStoreFacts, extractHybrid, personalizationController } = require('./personalizationController');
 const prompts = require('../prompts');
 const userProfileMemory = require('./userProfileMemory');
+const { dynamicLessonGenerator } = require('./dynamicLessonGenerator');
+const { enhancedPersonalizationEngine } = require('./enhancedPersonalizationEngine');
+const { advancedTutoringStrategy } = require('./advancedTutoringStrategy');
 
 // Optional RAG chain (LangChain). Loaded lazily to avoid hard dependency at boot.
 let ragChatChain = null;
@@ -50,7 +53,13 @@ class AIOrchestrator {
     console.log(`🧠 AI Orchestrator processing: ${type} for user ${userId}`);
 
     try {
-      // 1. Build comprehensive context
+      // Fast path for simple chat interactions
+      if (type === 'chat' && this.shouldUseFastPath(request)) {
+        console.log(`⚡ Using fast path for chat request`);
+        return await this.handleFastChatInteraction(request);
+      }
+
+      // 1. Build comprehensive context for complex interactions
       const unifiedContext = await this.buildUnifiedContext(userId, request);
 
       // 2. Route to appropriate handler
@@ -67,6 +76,15 @@ class AIOrchestrator {
           break;
         case 'tutoring':
           response = await this.handleTutoringInteraction(unifiedContext);
+          break;
+        case 'dynamic_lesson_generation':
+          response = await this.handleDynamicLessonGeneration(unifiedContext);
+          break;
+        case 'enhanced_tutoring':
+          response = await this.handleEnhancedTutoring(unifiedContext);
+          break;
+        case 'adaptive_lesson_delivery':
+          response = await this.handleAdaptiveLessonDelivery(unifiedContext);
           break;
         default:
           throw new Error(`Unknown interaction type: ${type}`);
@@ -596,6 +614,506 @@ class AIOrchestrator {
         errorMessage: error.message
       }
     };
+  }
+
+  /**
+   * Handle dynamic lesson generation requests
+   */
+  async handleDynamicLessonGeneration(context) {
+    console.log('🎯 Handling dynamic lesson generation');
+    
+    const { user, context: requestContext } = context;
+    const userId = user.id;
+
+    try {
+      // Extract lesson generation parameters from context
+      const lessonRequest = {
+        baseTopicOrLesson: requestContext.baseLesson || requestContext.topic || 'space_exploration',
+        learningObjectives: requestContext.learningObjectives || [],
+        difficultyLevel: requestContext.difficultyLevel || 'adaptive',
+        estimatedDuration: requestContext.estimatedDuration || 20,
+        focusAreas: requestContext.focusAreas || [],
+        weaknessesToAddress: context.enhancedContext?.strugglingTopics || [],
+        strengthsToLeverage: context.enhancedContext?.masteredConcepts || []
+      };
+
+      // Generate personalization insights
+      const personalizationInsights = await enhancedPersonalizationEngine.generatePersonalizationInsights(
+        userId, 
+        { currentLesson: requestContext, forceRefresh: false }
+      );
+
+      // Generate the dynamic lesson
+      const generatedLesson = await dynamicLessonGenerator.generateDynamicLesson(userId, lessonRequest);
+
+      return {
+        message: `I've created a personalized lesson just for you! This ${generatedLesson.estimated_duration}-minute mission "${generatedLesson.title}" is designed specifically for your learning style and current knowledge level.`,
+        type: 'dynamic_lesson_generation',
+        lesson: generatedLesson,
+        personalization: personalizationInsights,
+        metadata: {
+          generation_method: 'ai_powered',
+          personalization_confidence: personalizationInsights.confidence,
+          total_blocks: generatedLesson.blocks.length,
+          adaptive_features: generatedLesson.blocks.filter(b => b.adaptive_features).length
+        }
+      };
+
+    } catch (error) {
+      console.error('❌ Error in dynamic lesson generation:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Handle enhanced tutoring interactions using advanced strategies
+   */
+  async handleEnhancedTutoring(context) {
+    console.log('🎓 Handling enhanced tutoring');
+    
+    const { user, prompt, context: requestContext } = context;
+    const userId = user.id;
+
+    try {
+      // Generate comprehensive tutoring strategy
+      const tutoringStrategy = await advancedTutoringStrategy.generateTutoringStrategy(userId, {
+        ...requestContext,
+        userPrompt: prompt,
+        currentContext: context
+      });
+
+      // Generate personalized response based on strategy
+      const tutoringPrompt = this.buildEnhancedTutoringPrompt(context, tutoringStrategy);
+      const aiResponse = await aiProviderManager.generateResponse(tutoringPrompt, 'gemini');
+
+      return {
+        message: aiResponse,
+        type: 'enhanced_tutoring',
+        strategy: tutoringStrategy,
+        metadata: {
+          tutoring_methodology: tutoringStrategy.methodology?.primary_methodology?.approach,
+          socratic_elements: tutoringStrategy.questioning?.socratic_principles,
+          personalization_confidence: tutoringStrategy.confidence,
+          adaptive_actions: tutoringStrategy.actions?.immediate_actions
+        }
+      };
+
+    } catch (error) {
+      console.error('❌ Error in enhanced tutoring:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Handle adaptive lesson delivery that adjusts in real-time
+   */
+  async handleAdaptiveLessonDelivery(context) {
+    console.log('📚 Handling adaptive lesson delivery');
+    
+    const { user, prompt, context: requestContext } = context;
+    const userId = user.id;
+
+    try {
+      // Get current lesson context
+      const currentLesson = requestContext.currentLesson;
+      const currentBlock = requestContext.currentBlock;
+      const userResponse = requestContext.userResponse;
+
+      // Generate personalization insights with current context
+      const personalizationInsights = await enhancedPersonalizationEngine.generatePersonalizationInsights(
+        userId, 
+        { currentLesson, currentBlock, userResponse }
+      );
+
+      // Generate tutoring strategy for this specific moment
+      const tutoringStrategy = await advancedTutoringStrategy.generateTutoringStrategy(userId, {
+        ...requestContext,
+        personalizationInsights
+      });
+
+      // Adapt the current lesson content if needed
+      let adaptedContent = currentBlock?.content;
+      if (tutoringStrategy.actions?.immediate_actions?.primary_action?.type === 'adaptation') {
+        adaptedContent = await this.adaptLessonContent(currentBlock, personalizationInsights, tutoringStrategy);
+      }
+
+      // Generate contextual response
+      const adaptivePrompt = this.buildAdaptiveLessonPrompt(context, personalizationInsights, tutoringStrategy, adaptedContent);
+      const aiResponse = await aiProviderManager.generateResponse(adaptivePrompt, 'gemini');
+
+      return {
+        message: aiResponse,
+        type: 'adaptive_lesson_delivery',
+        adaptedContent,
+        strategy: tutoringStrategy,
+        personalization: personalizationInsights,
+        metadata: {
+          adaptation_applied: !!adaptedContent,
+          tutoring_approach: tutoringStrategy.methodology?.primary_methodology?.approach,
+          next_recommendations: tutoringStrategy.sequencing?.optimal_next_steps
+        }
+      };
+
+    } catch (error) {
+      console.error('❌ Error in adaptive lesson delivery:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Build enhanced tutoring prompt using advanced strategies
+   */
+  buildEnhancedTutoringPrompt(context, tutoringStrategy) {
+    const { user, prompt, enhancedContext, emotionalState } = context;
+    
+    return `You are Spacey, an advanced AI tutor with sophisticated pedagogical capabilities. Use the provided tutoring strategy to deliver an optimal learning experience.
+
+TUTORING STRATEGY:
+Methodology: ${tutoringStrategy.methodology?.primary_methodology?.approach}
+Immediate Action: ${JSON.stringify(tutoringStrategy.actions?.immediate_actions?.primary_action)}
+Questioning Strategy: ${JSON.stringify(tutoringStrategy.questioning?.questioning_sequence?.opening_questions)}
+
+LEARNER CONTEXT:
+User: ${user.name || 'Explorer'}
+Current Understanding: ${enhancedContext?.masteredConcepts?.join(', ') || 'Assessing...'}
+Knowledge Gaps: ${enhancedContext?.strugglingTopics?.join(', ') || 'None identified'}
+Learning Style: ${tutoringStrategy.personalization?.learningAnalysis?.learningStyle?.primary || 'Adaptive'}
+Emotional State: ${emotionalState?.emotion || 'Engaged'}
+
+USER MESSAGE: "${prompt}"
+
+TUTORING INSTRUCTIONS:
+1. Apply the ${tutoringStrategy.methodology?.primary_methodology?.approach} methodology
+2. Use the immediate action: ${tutoringStrategy.actions?.immediate_actions?.primary_action?.type}
+3. Incorporate Socratic questioning where appropriate
+4. Adapt to the learner's cognitive state and emotional needs
+5. Maintain engagement through space exploration narratives
+6. Provide scaffolding at level: ${tutoringStrategy.actions?.strategic_actions?.concept_development?.progression_steps?.[0] || 'foundational'}
+
+Respond as Spacey with sophisticated tutoring that feels natural and engaging while implementing the advanced pedagogical strategies.`;
+  }
+
+  /**
+   * Build adaptive lesson delivery prompt
+   */
+  buildAdaptiveLessonPrompt(context, personalizationInsights, tutoringStrategy, adaptedContent) {
+    const { user, prompt, context: requestContext } = context;
+    
+    return `You are Spacey, delivering an adaptive lesson that adjusts in real-time to the learner's needs.
+
+PERSONALIZATION INSIGHTS:
+Learning Analysis: ${JSON.stringify(personalizationInsights.learningAnalysis?.learningStyle)}
+Cognitive Profile: ${JSON.stringify(personalizationInsights.cognitiveProfile?.optimal_conditions)}
+Knowledge Mapping: Critical gaps: ${personalizationInsights.knowledgeMapping?.critical_gaps?.join(', ') || 'none'}
+
+CURRENT LESSON CONTEXT:
+${requestContext.currentLesson ? `Lesson: ${requestContext.currentLesson.title}` : 'No lesson context'}
+${requestContext.currentBlock ? `Block: ${requestContext.currentBlock.block_id}` : 'No block context'}
+${adaptedContent ? `Adapted Content: ${adaptedContent}` : 'Using original content'}
+
+TUTORING STRATEGY:
+Approach: ${tutoringStrategy.methodology?.primary_methodology?.approach}
+Scaffolding Level: ${tutoringStrategy.actions?.strategic_actions?.concept_development?.progression_steps?.[0]}
+Next Steps: ${tutoringStrategy.sequencing?.optimal_next_steps?.join(', ') || 'Continue current path'}
+
+USER MESSAGE: "${prompt}"
+
+ADAPTIVE INSTRUCTIONS:
+1. Respond to the user's message in the context of their current lesson
+2. Use the identified optimal tutoring approach
+3. Adjust complexity based on cognitive profile
+4. Apply personalized engagement strategies
+5. Guide toward the optimal next learning steps
+6. Maintain the space mission narrative and excitement
+
+Deliver a response that feels perfectly tailored to this specific learner at this specific moment in their learning journey.`;
+  }
+
+  /**
+   * Adapt lesson content based on personalization insights
+   */
+  async adaptLessonContent(currentBlock, personalizationInsights, tutoringStrategy) {
+    if (!currentBlock) return null;
+
+    const adaptationPrompt = `Adapt this lesson content for optimal personalization.
+
+ORIGINAL CONTENT:
+${currentBlock.content}
+
+PERSONALIZATION INSIGHTS:
+Learning Style: ${personalizationInsights.learningAnalysis?.learningStyle?.primary}
+Cognitive Load Preference: ${personalizationInsights.cognitiveProfile?.optimal_conditions?.cognitive_load}
+Motivational Factors: ${JSON.stringify(personalizationInsights.learningAnalysis?.motivationalFactors?.intrinsicMotivators)}
+
+TUTORING STRATEGY:
+Recommended Approach: ${tutoringStrategy.methodology?.primary_methodology?.approach}
+Scaffolding Level: ${tutoringStrategy.actions?.strategic_actions?.concept_development?.progression_steps?.[0]}
+
+ADAPTATION REQUIREMENTS:
+1. Adjust complexity for cognitive load preference
+2. Incorporate preferred learning style elements
+3. Add motivational hooks from learner profile
+4. Apply recommended scaffolding level
+5. Maintain space exploration theme
+6. Keep core learning objectives intact
+
+Return adapted content that is optimally personalized for this learner while preserving the essential learning goals.`;
+
+    try {
+      const adaptedContent = await aiProviderManager.generateResponse(adaptationPrompt, 'gemini');
+      return adaptedContent;
+    } catch (error) {
+      console.error('Error adapting lesson content:', error);
+      return currentBlock.content; // Fallback to original
+    }
+  }
+
+  /**
+   * Determines if a chat request can use the fast path
+   */
+  shouldUseFastPath(request) {
+    const { context = {}, prompt } = request;
+    
+    // Use fast path if:
+    // 1. No complex lesson context (not in active lesson navigation)
+    // 2. Simple conversational prompt (not asking for lesson generation)
+    // 3. Not requesting specific tutoring features
+    
+    const isInActiveLesson = context.currentLesson || context.lessonData;
+    const isComplexRequest = prompt && (
+      prompt.toLowerCase().includes('generate') ||
+      prompt.toLowerCase().includes('create lesson') ||
+      prompt.toLowerCase().includes('dynamic') ||
+      prompt.toLowerCase().includes('analyze') ||
+      prompt.toLowerCase().includes('tutoring') ||
+      prompt.length > 300 // Longer prompts likely need full context
+    );
+    const needsFullTutoring = context.tutoringStyle === 'socratic' || 
+                             context.requiresPersonalization || 
+                             context.forceFullProcessing;
+
+    // Always use full processing if there's lesson context
+    // Use fast path only for casual conversational interactions
+    return !isInActiveLesson && !isComplexRequest && !needsFullTutoring;
+  }
+
+  /**
+   * Fast path chat handler - minimal processing for instant responses
+   */
+  async handleFastChatInteraction(request) {
+    const { user, prompt, context = {} } = request;
+    const userId = user?.id || 'anonymous';
+
+    try {
+      // Enhanced user info (still cached/lightweight but more complete)
+      const basicProfile = await this.getBasicUserProfile(userId);
+      
+      // Get recent conversation context for continuity
+      const recentContext = await this.getRecentConversationContext(userId, 3); // Last 3 interactions
+      
+      // Enhanced prompt with conversation context
+      const contextualPrompt = this.buildContextualFastChatPrompt(prompt, basicProfile, context, recentContext);
+      
+      // Single AI call for response with timeout protection
+      const response = await Promise.race([
+        aiProviderManager.generateResponse(contextualPrompt, 'gemini'),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Fast path timeout')), 10000) // 10 second timeout
+        )
+      ]);
+      
+      // Trigger background processing (non-blocking)
+      this.triggerBackgroundProcessing(userId, request).catch(err => 
+        console.log('Background processing error (non-critical):', err.message)
+      );
+
+      return {
+        message: response,
+        traits: null, // Skip trait analysis for speed
+        emotional_state: null,
+        thinking_pattern: null,
+        metadata: {
+          response_time: Date.now(),
+          processing_method: 'fast_path',
+          background_processing: true
+        }
+      };
+
+    } catch (error) {
+      console.error('Fast chat error, falling back to full processing:', error);
+      // Fallback to full processing if fast path fails
+      return await this.processRequest({ ...request, context: { ...context, forceFullProcessing: true } });
+    }
+  }
+
+  /**
+   * Get recent conversation context for continuity
+   */
+  async getRecentConversationContext(userId, limit = 3) {
+    try {
+      const interactions = await persistentMemory.getRecentInteractions(userId, limit);
+      return interactions.map(interaction => ({
+        user: interaction.userMessage || interaction.content || '',
+        spacey: interaction.aiResponse || '',
+        timestamp: interaction.timestamp
+      }));
+    } catch (error) {
+      console.log('No recent context available');
+      return [];
+    }
+  }
+
+  /**
+   * Get basic user profile from cache or minimal DB query
+   */
+  async getBasicUserProfile(userId) {
+    try {
+      // Try cache first
+      if (this.profileCache && this.profileCache[userId]) {
+        const cached = this.profileCache[userId];
+        if (Date.now() - cached.timestamp < 300000) { // 5 min cache
+          return cached.profile;
+        }
+      }
+
+      // Minimal profile fetch
+      const profile = await persistentMemory.fetchUserProfile(userId);
+      
+      // Cache it
+      if (!this.profileCache) this.profileCache = {};
+      this.profileCache[userId] = {
+        profile: {
+          name: profile?.name || 'Explorer',
+          preferredTopics: profile?.learning?.preferredTopics || [],
+          strugglingTopics: profile?.learning?.strugglingTopics || [],
+          learningStyle: profile?.learning?.preferredStyle || 'multimodal'
+        },
+        timestamp: Date.now()
+      };
+
+      return this.profileCache[userId].profile;
+    } catch (error) {
+      console.log('Using default profile for fast path');
+      return { name: 'Explorer', preferredTopics: [], strugglingTopics: [], learningStyle: 'multimodal' };
+    }
+  }
+
+  /**
+   * Build a fast, lightweight prompt for instant responses
+   */
+  buildFastChatPrompt(prompt, basicProfile, context) {
+    return `You are Spacey, an enthusiastic AI space tutor and mission specialist aboard a space station. You have a warm, encouraging personality and love sharing the wonders of space exploration.
+
+USER: ${basicProfile.name || 'Explorer'}
+${basicProfile.preferredTopics?.length ? `KNOWN INTERESTS: ${basicProfile.preferredTopics.join(', ')}` : ''}
+${basicProfile.strugglingTopics?.length ? `AREAS TO SUPPORT: ${basicProfile.strugglingTopics.join(', ')}` : ''}
+
+USER MESSAGE: "${prompt}"
+
+PERSONALITY & STYLE:
+- Warm, encouraging, and genuinely excited about space
+- Use vivid space imagery and real mission examples
+- Ask thoughtful follow-up questions to keep the conversation flowing
+- Connect topics to space exploration when natural
+- Maintain conversational flow - don't sound scripted or template-like
+- Be curious about what the user finds most interesting
+- Share fascinating space facts and stories when relevant
+
+RESPONSE APPROACH:
+1. Respond naturally to their message with enthusiasm
+2. Add interesting details or examples related to their topic
+3. Ask a thoughtful follow-up question to continue the conversation
+4. Make connections to space exploration when it feels natural
+
+Respond as the real Spacey - conversational, curious, and passionate about space:`;
+  }
+
+  /**
+   * Build a contextual fast chat prompt with conversation history
+   */
+  buildContextualFastChatPrompt(prompt, basicProfile, context, recentContext) {
+    let conversationHistory = '';
+    if (recentContext.length > 0) {
+      conversationHistory = '\n\nRECENT CONVERSATION:\n';
+      recentContext.forEach((interaction, i) => {
+        if (interaction.user) {
+          conversationHistory += `You: ${interaction.user}\n`;
+        }
+        if (interaction.spacey) {
+          conversationHistory += `Spacey: ${interaction.spacey.substring(0, 150)}${interaction.spacey.length > 150 ? '...' : ''}\n`;
+        }
+      });
+      conversationHistory += '\n';
+    }
+
+    return `You are Spacey, an enthusiastic AI space tutor and mission specialist aboard a space station. You have a warm, encouraging personality and love sharing the wonders of space exploration.
+
+USER: ${basicProfile.name || 'Explorer'}
+${basicProfile.preferredTopics?.length ? `KNOWN INTERESTS: ${basicProfile.preferredTopics.join(', ')}` : ''}
+${basicProfile.strugglingTopics?.length ? `AREAS TO SUPPORT: ${basicProfile.strugglingTopics.join(', ')}` : ''}
+${basicProfile.learningStyle ? `LEARNING STYLE: ${basicProfile.learningStyle}` : ''}${conversationHistory}
+CURRENT MESSAGE: "${prompt}"
+
+CONVERSATION GUIDELINES:
+- Remember and reference our previous conversations naturally
+- Build on topics we've discussed before
+- Use the user's name (${basicProfile.name || 'Explorer'}) occasionally
+- Maintain continuity and personal connection
+- Be enthusiastic but not repetitive
+- Ask follow-up questions that show you're listening and engaged
+- Connect new topics to their known interests when relevant
+
+PERSONALITY & STYLE:
+- Warm, encouraging, and genuinely excited about space
+- Use vivid space imagery and real mission examples
+- Ask thoughtful follow-up questions to keep the conversation flowing
+- Connect topics to space exploration when natural
+- Maintain conversational flow - don't sound scripted or template-like
+- Be curious about what the user finds most interesting
+- Share fascinating space facts and stories when relevant
+- Show genuine interest in their thoughts and questions
+
+RESPONSE APPROACH:
+1. Acknowledge any context from our previous conversation if relevant
+2. Respond naturally to their current message with enthusiasm
+3. Add interesting details or examples related to their topic
+4. Ask a thoughtful follow-up question to continue the conversation
+5. Make connections to space exploration when it feels natural
+
+Respond as the real Spacey - conversational, curious, passionate about space, and genuinely interested in continuing our ongoing dialogue:`;
+  }
+
+  /**
+   * Trigger background processing for analytics and profiling (non-blocking)
+   */
+  async triggerBackgroundProcessing(userId, request) {
+    // Run heavy processing in background without blocking response
+    setTimeout(async () => {
+      try {
+        console.log(`🔄 Background processing for user ${userId}`);
+        
+        // Update user analytics
+        const { prompt } = request;
+        if (prompt) {
+          // Call methods with correct parameters
+          const interactionData = {
+            userMessage: prompt,
+            timestamp: Date.now(),
+            processing_method: 'fast_path_background'
+          };
+          
+          await persistentMemory.updateUserAnalytics(userId, interactionData);
+          await persistentMemory.addInteraction(userId, prompt, response?.message || '', {
+            processing_method: 'fast_path_background',
+            timestamp: Date.now()
+          });
+        }
+
+        console.log(`✅ Background processing completed for user ${userId}`);
+      } catch (error) {
+        console.log(`❌ Background processing failed for user ${userId}:`, error.message);
+      }
+    }, 100); // Start background work after 100ms
   }
 }
 

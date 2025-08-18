@@ -407,7 +407,8 @@ class PersistentMemoryManager {
   }
 
   updateCommunicationPatterns(profile, interaction) {
-    const msgLength = interaction.userMessage.length;
+    const userMessage = interaction.userMessage || interaction.content || '';
+    const msgLength = userMessage.length;
     const total = profile.stats.totalInteractions;
     
     // Update average message length
@@ -415,7 +416,7 @@ class PersistentMemoryManager {
       ((profile.communication.averageMessageLength * (total - 1)) + msgLength) / total;
 
     // Analyze question types
-    const message = interaction.userMessage.toLowerCase();
+    const message = userMessage.toLowerCase();
     if (message.includes('how')) profile.communication.questionTypes.push('how');
     if (message.includes('why')) profile.communication.questionTypes.push('why');
     if (message.includes('what')) profile.communication.questionTypes.push('what');
