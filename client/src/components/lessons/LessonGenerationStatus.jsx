@@ -59,7 +59,7 @@ const LessonGenerationStatus = ({ isGenerating, onToggleDynamic }) => {
         </div>
       )}
 
-      <style jsx>{`
+  <style>{`
         .lesson-generation-status {
           background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
           color: white;
@@ -194,7 +194,7 @@ const LessonGenerationStatus = ({ isGenerating, onToggleDynamic }) => {
         .static-mode-info p {
           margin: 0;
         }
-      `}</style>
+  `}</style>
     </div>
   );
 };

@@ -1,100 +1,10 @@
 const { aiProviderManager } = require('./aiProviders');
 const { persistentMemory } = require('./persistentMemory');
+const { parseAIJSONResponse, fixCommonJSONIssues } = require('../utils/jsonParser');
 const fs = require('fs').promises;
 const path = require('path');
 
-/**
- * Helper function to clean and parse JSON responses from AI
- */
-function parseAIJSONResponse(response) {
-  try {
-    return JSON.parse(response);
-  } catch (error) {
-    console.log('Direct JSON parse failed, trying extraction methods...');
-    
-    // Try to extract JSON from markdown code blocks
-    const jsonMatch = response.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-    if (jsonMatch) {
-      try {
-        const cleanedJson = fixCommonJSONIssues(jsonMatch[1].trim());
-        return JSON.parse(cleanedJson);
-      } catch (innerError) {
-        console.error('Failed to parse extracted JSON:', innerError);
-      }
-    }
-    
-    // Try to find JSON object in the response
-    const objectMatch = response.match(/\{[\s\S]*\}/);
-    if (objectMatch) {
-      try {
-        const cleanedJson = fixCommonJSONIssues(objectMatch[0]);
-        return JSON.parse(cleanedJson);
-      } catch (innerError) {
-        console.error('Failed to parse extracted JSON object:', innerError);
-      }
-    }
-    
-    // Try to find JSON array in the response
-    const arrayMatch = response.match(/\[[\s\S]*\]/);
-    if (arrayMatch) {
-      try {
-        const cleanedJson = fixCommonJSONIssues(arrayMatch[0]);
-        return JSON.parse(cleanedJson);
-      } catch (innerError) {
-        console.error('Failed to parse extracted JSON array:', innerError);
-      }
-    }
-    
-    console.error('No valid JSON found in AI response (first 200 chars):', response.substring(0, 200));
-    throw new Error(`No valid JSON found in AI response`);
-  }
-}
-
-/**
- * Attempt to fix common JSON formatting issues
- */
-function fixCommonJSONIssues(jsonStr) {
-  // Remove any markdown code blocks
-  jsonStr = jsonStr.replace(/```json\s*/g, '').replace(/```\s*$/g, '');
-  
-  // Remove trailing commas in arrays and objects
-  jsonStr = jsonStr.replace(/,(\s*[}\]])/g, '$1');
-  
-  // Fix missing commas between array elements
-  jsonStr = jsonStr.replace(/"\s*\n\s*"/g, '",\n"');
-  jsonStr = jsonStr.replace(/}\s*\n\s*{/g, '},\n{');
-  jsonStr = jsonStr.replace(/]\s*\n\s*\[/g, '],\n[');
-  
-  // Fix unquoted property names (but be careful with nested content)
-  jsonStr = jsonStr.replace(/(\n\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":');
-  
-  // Fix single quotes to double quotes (but be careful with apostrophes in content)
-  jsonStr = jsonStr.replace(/:\s*'([^']*?)'/g, ': "$1"');
-  
-  // Remove comments
-  jsonStr = jsonStr.replace(/\/\/.*$/gm, '');
-  jsonStr = jsonStr.replace(/\/\*[\s\S]*?\*\//g, '');
-  
-  // Remove any trailing commas before closing brackets
-  jsonStr = jsonStr.replace(/,(\s*})/g, '$1');
-  jsonStr = jsonStr.replace(/,(\s*])/g, '$1');
-  
-  // Ensure proper bracket matching
-  const openBraces = (jsonStr.match(/{/g) || []).length;
-  const closeBraces = (jsonStr.match(/}/g) || []).length;
-  const openBrackets = (jsonStr.match(/\[/g) || []).length;
-  const closeBrackets = (jsonStr.match(/]/g) || []).length;
-  
-  // Add missing closing braces/brackets
-  if (openBraces > closeBraces) {
-    jsonStr += '}' .repeat(openBraces - closeBraces);
-  }
-  if (openBrackets > closeBrackets) {
-    jsonStr += ']'.repeat(openBrackets - closeBrackets);
-  }
-  
-  return jsonStr.trim();
-}
+// Remove local helpers; using shared utils/jsonParser
 
 /**
  * Dynamic Lesson Generator - Creates personalized lessons in real-time
@@ -175,7 +85,7 @@ class DynamicLessonGenerator {
    * Analyze user's current learning state and preferences
    */
   async analyzeLearningState(userId, userProfile) {
-    const analysisPrompt = `Analyze this learner's profile and provide learning state insights.
+    const analysisPrompt = `CRITICAL: Return ONLY valid JSON. No markdown, no extra text, no comments.\n\nAnalyze this learner's profile and provide learning state insights.
 
 User Profile:
 ${JSON.stringify({
@@ -262,75 +172,45 @@ Provide a JSON response with:
       strengthsToLeverage
     } = params;
 
-    const structurePrompt = `CRITICAL: You must return ONLY valid JSON. No markdown, no extra text, no comments.
+  const baseTemplateSection = baseLessonTemplate ? `\nBASE LESSON TEMPLATE (for analysis and alignment):\n${JSON.stringify(baseLessonTemplate, null, 2)}\n\nADAPTATION INSTRUCTIONS:\n- Respect core flow and key objectives of the base template.\n- Modernize tutoring strategies (Socratic, scaffolding, checkpoints).\n- Keep or refine engaging beats (briefing, exploration, decision, reflection).` : '';
 
-Generate a personalized lesson structure for this space science lesson.
-
-USER CONTEXT:
-- Learning Level: ${learningAnalysis.currentLevel}
-- Learning Style: ${learningAnalysis.learningStyle}
-- Preferred Pacing: ${learningAnalysis.preferredPacing}
-- Struggling Areas: ${learningAnalysis.strugglingAreas.join(', ')}
-- Strong Areas: ${learningAnalysis.strongAreas.join(', ')}
-- Recommended Approach: ${learningAnalysis.recommendedApproach}
-
-LESSON REQUIREMENTS:
-- Duration: ${estimatedDuration} minutes
-- Difficulty: ${difficultyLevel}
-- Focus Areas: ${focusAreas.join(', ')}
-- Address Weaknesses: ${weaknessesToAddress.join(', ')}
-- Leverage Strengths: ${strengthsToLeverage.join(', ')}
-- Learning Objectives: ${learningObjectives.join(', ')}
-- Must have at least ${baseLessonTemplate?.total_blocks || 8} blocks to match original lesson depth
-
-Return ONLY this JSON structure:
-{
-  "mission_id": "dynamic_lesson_${Date.now()}",
-  "title": "Engaging space mission title",
-  "description": "Brief description targeting user's interests",
-  "total_blocks": 8,
-  "estimated_duration": ${estimatedDuration},
-  "difficulty_level": "adaptive",
-  "learning_objectives": ["objective1", "objective2", "objective3"],
-  "personalization_strategy": "brief strategy explanation",
-  "tutoring_approach": "guided",
-  "block_structure": [
-    {
-      "block_id": "intro_1",
-      "type": "narration",
-      "title": "Mission Briefing",
-      "learning_focus": "specific concept",
-      "personalization_notes": "how this addresses user needs",
-      "estimated_minutes": 2,
-      "difficulty_progression": "building",
-      "tutoring_strategy": "direct instruction"
-    },
-    {
-      "block_id": "exploration_2", 
-      "type": "choice",
-      "title": "Decision Point",
-      "learning_focus": "concept application",
-      "personalization_notes": "choice structure suits user",
-      "estimated_minutes": 3,
-      "difficulty_progression": "building",
-      "tutoring_strategy": "guided practice"
-    }
-  ]
-}
-
-ENSURE: 
-- All property names are in quotes
-- All arrays end properly with commas between elements 
-- All objects are properly closed
-- No trailing commas
-- Exactly ${estimatedDuration} total minutes across all blocks`;
+  const structurePrompt = `CRITICAL: You must return ONLY valid JSON. No markdown, no extra text, no comments.\n\nGenerate a personalized lesson structure for this space science lesson.\n${baseTemplateSection}\n\nUSER CONTEXT:\n- Learning Level: ${learningAnalysis.currentLevel}\n- Learning Style: ${learningAnalysis.learningStyle}\n- Preferred Pacing: ${learningAnalysis.preferredPacing}\n- Struggling Areas: ${learningAnalysis.strugglingAreas.join(', ')}\n- Strong Areas: ${learningAnalysis.strongAreas.join(', ')}\n- Recommended Approach: ${learningAnalysis.recommendedApproach}\n\nLESSON REQUIREMENTS:\n- Duration: ${estimatedDuration} minutes\n- Difficulty: ${difficultyLevel}\n- Focus Areas: ${focusAreas.join(', ')}\n- Address Weaknesses: ${weaknessesToAddress.join(', ')}\n- Leverage Strengths: ${strengthsToLeverage.join(', ')}\n- Learning Objectives: ${learningObjectives.join(', ')}\n- Must have at least ${baseLessonTemplate?.total_blocks || 8} blocks to match original lesson depth\n\nReturn ONLY this JSON structure:\n{\n  "mission_id": "dynamic_lesson_${Date.now()}",\n  "title": "Engaging space mission title",\n  "description": "Brief description targeting user's interests",\n  "total_blocks": 8,\n  "estimated_duration": ${estimatedDuration},\n  "difficulty_level": "adaptive",\n  "learning_objectives": ["objective1", "objective2", "objective3"],\n  "personalization_strategy": "brief strategy explanation",\n  "tutoring_approach": "guided",\n  "block_structure": [\n    {\n      "block_id": "intro_1",\n      "type": "narration",\n      "title": "Mission Briefing",\n      "learning_focus": "specific concept",\n      "personalization_notes": "how this addresses user needs",\n      "estimated_minutes": 2,\n      "difficulty_progression": "building",\n      "tutoring_strategy": "direct instruction"\n    },\n    {\n      "block_id": "exploration_2", \n      "type": "choice",\n      "title": "Decision Point",\n      "learning_focus": "concept application",\n      "personalization_notes": "choice structure suits user",\n      "estimated_minutes": 3,\n      "difficulty_progression": "building",\n      "tutoring_strategy": "guided practice"\n    }\n  ]\n}\n\nENSURE: \n- All property names are in quotes\n- All arrays end properly with commas between elements \n- All objects are properly closed\n- No trailing commas\n- Exactly ${estimatedDuration} total minutes across all blocks`;
 
     try {
       const response = await aiProviderManager.generateResponse(structurePrompt, 'gemini');
       return parseAIJSONResponse(response);
     } catch (error) {
       console.error('Error generating lesson structure:', error);
-      throw error;
+      // Fallback: generate a simple deterministic structure
+      const nowId = `dynamic_lesson_${Date.now()}`;
+      const totalBlocks = Math.max(6, Math.min(12, Math.ceil(estimatedDuration / 2)));
+      const block_structure = Array.from({ length: totalBlocks }, (_, i) => {
+        const idx = i + 1;
+        const isChoice = idx % 3 === 0;
+        return {
+          block_id: `${isChoice ? 'choice' : 'block'}_${idx}`,
+          type: isChoice ? 'choice' : 'narration',
+          title: isChoice ? `Decision Point ${idx}` : `Learning Block ${idx}`,
+          learning_focus: focusAreas[i % Math.max(1, focusAreas.length)] || (learningObjectives[i % Math.max(1, learningObjectives.length)] || 'core concept'),
+          personalization_notes: 'Fallback structure tailored from provided parameters',
+          estimated_minutes: Math.max(1, Math.round(estimatedDuration / totalBlocks)),
+          difficulty_progression: i < totalBlocks / 3 ? 'building' : i < (2 * totalBlocks) / 3 ? 'developing' : 'advancing',
+          tutoring_strategy: isChoice ? 'guided practice' : 'direct instruction'
+        };
+      });
+
+      return {
+        mission_id: nowId,
+        title: 'Adaptive Space Mission (Fallback)',
+        description: 'Auto-generated structure due to AI unavailability. Uses provided objectives and focus areas.',
+        total_blocks: totalBlocks,
+        estimated_duration: estimatedDuration,
+        difficulty_level: difficultyLevel,
+        learning_objectives: learningObjectives.length ? learningObjectives : ['Understand key ideas', 'Practice application', 'Reflect and connect'],
+        personalization_strategy: 'Parameter-driven tailoring (fallback mode)',
+        tutoring_approach: 'guided',
+        block_structure
+      };
     }
   }
 
@@ -363,7 +243,9 @@ ENSURE:
     const isLastBlock = blockIndex === lessonStructure.block_structure.length - 1;
     const nextBlockId = !isLastBlock ? lessonStructure.block_structure[blockIndex + 1].block_id : null;
 
-    const blockPrompt = `Generate detailed content for this lesson block.
+    const blockPrompt = `CRITICAL: Return ONLY valid JSON. No markdown, no extra text, no comments.
+
+Generate detailed content for this lesson block.
 
 LESSON CONTEXT:
 Title: ${lessonStructure.title}
@@ -385,7 +267,7 @@ USER PROFILE:
 PREVIOUS BLOCKS CONTEXT:
 ${previousBlocks.length > 0 ? JSON.stringify(previousBlocks.slice(-2), null, 2) : 'None - this is the first block'}
 
-Generate a complete lesson block JSON:
+Return ONLY a single JSON object with exactly these properties:
 {
   "block_id": "${blockTemplate.block_id}",
   "type": "${blockTemplate.type}",
@@ -419,24 +301,25 @@ Generate a complete lesson block JSON:
   }
 }
 
-${blockTemplate.type === 'choice' ? `
-Also include:
-"choices": [
-  {
-    "text": "Choice option text",
-    "consequence": "What happens if chosen",
-    "learning_value": "What this teaches",
-    "next_block": "where this leads",
-    "difficulty_level": "appropriate for user"
-  }
-]
-` : ''}
-
-Make it highly engaging, scientifically accurate, and perfectly tailored to this specific learner's profile.`;
+If the block type is "choice", you MUST include an additional property "choices" as an array inside the same object, with items shaped as:
+{
+  "text": "Choice option text",
+  "consequence": "What happens if chosen",
+  "learning_value": "What this teaches",
+  "next_block": "where this leads",
+  "difficulty_level": "appropriate for user"
+}
+Ensure: all keys quoted, no trailing commas, and overall JSON is valid.`;
 
     try {
       const response = await aiProviderManager.generateResponse(blockPrompt, 'gemini');
-      return parseAIJSONResponse(response);
+      try {
+        return parseAIJSONResponse(response);
+      } catch (e) {
+        const cleaned = fixCommonJSONIssues(String(response));
+        try { return JSON.parse(cleaned); } catch (_) {}
+        throw e;
+      }
     } catch (error) {
       console.error(`Error generating block ${blockTemplate.block_id}:`, error);
       // Return a basic fallback block
@@ -509,20 +392,7 @@ Make it highly engaging, scientifically accurate, and perfectly tailored to this
    * Generate Socratic questions for a specific block
    */
   async generateSocraticQuestions(block, learningAnalysis) {
-    const prompt = `Generate 3-4 Socratic questions for this lesson block that encourage critical thinking and discovery.
-
-Block Content: ${block.content}
-Learning Goal: ${block.learning_goal}
-User Learning Style: ${learningAnalysis.learningStyle}
-User Level: ${learningAnalysis.currentLevel}
-
-Generate questions that:
-- Lead students to discover concepts themselves
-- Build on prior knowledge
-- Encourage deeper thinking
-- Are appropriate for ${learningAnalysis.currentLevel} level
-
-Return as JSON array: ["question1", "question2", "question3"]`;
+    const prompt = `CRITICAL: Return ONLY a JSON array. No markdown, no extra text.\n\nGenerate 3-4 Socratic questions for this lesson block that encourage critical thinking and discovery.\n\nBlock Content: ${block.content}\nLearning Goal: ${block.learning_goal}\nUser Learning Style: ${learningAnalysis.learningStyle}\nUser Level: ${learningAnalysis.currentLevel}\n\nGenerate questions that:\n- Lead students to discover concepts themselves\n- Build on prior knowledge\n- Encourage deeper thinking\n- Are appropriate for ${learningAnalysis.currentLevel} level\n\nReturn as JSON array: [\"question1\", \"question2\", \"question3\"]`;
 
     try {
       const response = await aiProviderManager.generateResponse(prompt, 'gemini');
@@ -652,7 +522,7 @@ Return as JSON array: ["question1", "question2", "question3"]`;
     const totalBlocks = blockTemplates.length;
     
     // Process blocks in smaller batches to avoid API overload
-    const batchSize = Math.min(3, totalBlocks); // Max 3 concurrent blocks
+  const batchSize = Math.min(2, totalBlocks); // Max 2 concurrent blocks to reduce API pressure
     
     for (let i = 0; i < totalBlocks; i += batchSize) {
       const batch = blockTemplates.slice(i, i + batchSize);

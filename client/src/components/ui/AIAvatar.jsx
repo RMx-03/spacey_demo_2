@@ -144,7 +144,8 @@ export default function AIAvatar({
   useEffect(() => {
     if (!webcamRef?.current) return;
     const interval = setInterval(() => {
-      const emotionalState = webcamRef.current.getEmotionalState?.();
+      // Safely access webcam ref and method to avoid null deref
+      const emotionalState = webcamRef?.current?.getEmotionalState?.();
       if (emotionalState?.visual && emotionalState.confidence > 0.3) {
         updateEmotionContext({ emotionalState, faceDetected: emotionalState.faceDetected });
         
@@ -159,7 +160,7 @@ export default function AIAvatar({
         }
       }
     }, 5000);
-    return () => clearInterval(interval);
+  return () => clearInterval(interval);
   }, [webcamRef, hasSeenFaceBefore, userInfo, globalSpeechState.isAnySpeaking, handleEmotionAwareResponse, handleLessonTutoring, updateEmotionContext, mode, lessonContext]);
 
   useEffect(() => {
@@ -175,14 +176,15 @@ export default function AIAvatar({
   // Removed mode tag from UI per simplification
 
   const getExpression = () => {
+    const emotionCtx = currentContext?.emotionContext;
     if (mode === "lesson") {
       // More expressive in lesson mode
-      const emotion = currentContext.emotionContext?.emotion?.toLowerCase() || 'neutral';
+      const emotion = emotionCtx?.emotion?.toLowerCase() || 'neutral';
       if (emotion === 'frustrated') return 'curious';
       if (emotion === 'excited') return 'happy';
       return emotion;
     }
-    return currentContext.emotionContext?.emotion?.toLowerCase() || 'neutral';
+    return emotionCtx?.emotion?.toLowerCase() || 'neutral';
   };
 
   return (
@@ -200,11 +202,11 @@ export default function AIAvatar({
 
       <div className={`absolute ${compact ? 'top-2' : 'top-10'} space-y-2`}>
         {/* Visual Analysis Status */}
-        {currentContext.emotionContext?.faceDetected && (
+        {currentContext?.emotionContext?.faceDetected && (
           <div className="flex items-center gap-2 px-3 py-1 bg-black/60 backdrop-blur-sm rounded-full text-xs">
             <Eye className="w-3 h-3 text-green-400" />
-            <span className="text-white capitalize">{currentContext.emotionContext.emotion}</span>
-            <span className="text-gray-300">{Math.round(currentContext.emotionContext.confidence * 100)}%</span>
+            <span className="text-white capitalize">{currentContext?.emotionContext?.emotion}</span>
+            <span className="text-gray-300">{Math.round((currentContext?.emotionContext?.confidence || 0) * 100)}%</span>
           </div>
         )}
 
@@ -239,4 +241,4 @@ export default function AIAvatar({
       {/* Removed developer status panel per request */}
     </div>
   );
-} 
+}

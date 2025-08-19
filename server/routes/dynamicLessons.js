@@ -7,7 +7,10 @@ const {
   getPersonalizationInsights,
   getTutoringStrategy,
   generateCustomLesson,
-  getLessonAdaptationSuggestions
+  getLessonAdaptationSuggestions,
+  startTutoringSession,
+  nextTutoringTurn,
+  submitTutoringResponse,
 } = require('../controllers/dynamicLessonController');
 const { userAssessmentTracker } = require('../controllers/userAssessmentTracker');
 const { intelligentCurriculumSequencer } = require('../controllers/intelligentCurriculumSequencer');
@@ -55,6 +58,11 @@ router.post('/tutoring/enhanced', getEnhancedTutoringResponse);
  * @access Private
  */
 router.get('/tutoring/strategy/:userId', getTutoringStrategy);
+
+// Natural tutoring session flow
+router.post('/tutoring/session/start', startTutoringSession);
+router.post('/tutoring/session/next', nextTutoringTurn);
+router.post('/tutoring/session/submit', submitTutoringResponse);
 
 /**
  * Personalization Routes

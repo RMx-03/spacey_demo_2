@@ -29,6 +29,14 @@ class AIProviderManager {
     });
   }
 
+  // Wrap a promise with a timeout
+  withTimeout(promise, ms, label = 'AI request') {
+    return new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+      promise.then((v) => { clearTimeout(t); resolve(v); }).catch((e) => { clearTimeout(t); reject(e); });
+    });
+  }
+
   setupGemini() {
     if (!process.env.GEMINI_API_KEY) {
       console.log('❌ Gemini API key not found');
@@ -46,11 +54,14 @@ class AIProviderManager {
         generate: async (prompt) => {
           try {
             console.log('🤖 Calling Gemini API...');
-            
-            const response = await genAI.models.generateContent({
-              model: 'gemini-2.0-flash-001',
-              contents: prompt,
-            });
+            const response = await this.withTimeout(
+              genAI.models.generateContent({
+                model: 'gemini-2.0-flash-001',
+                contents: prompt,
+              }),
+              20000,
+              'Gemini request'
+            );
             
             if (response && response.text) {
               console.log('✅ Gemini API response received');
@@ -59,7 +70,7 @@ class AIProviderManager {
             
             throw new Error('No valid response from Gemini API');
           } catch (error) {
-            console.error('❌ Gemini API Error:', error.message);
+            console.error('❌ Gemini API Error:', error && error.message ? error.message : String(error));
             throw error;
           }
         }
@@ -83,22 +94,22 @@ class AIProviderManager {
         try {
           console.log('🤖 Calling OpenAI API...');
           
-          const response = await axios.post('https://api.openai.com/v1/chat/completions', {
+          const response = await this.withTimeout(axios.post('https://api.openai.com/v1/chat/completions', {
             model: 'gpt-4o-mini',
             messages: [{ role: 'user', content: prompt }],
-            max_tokens: 500,
+            max_tokens: 400,
             temperature: 0.8
           }, {
             headers: {
               'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
               'Content-Type': 'application/json'
             }
-          });
+          }), 20000, 'OpenAI request');
           
           console.log('✅ OpenAI API response received');
           return response.data.choices[0].message.content;
         } catch (error) {
-          console.error('❌ OpenAI API Error:', error.message);
+          console.error('❌ OpenAI API Error:', error && error.message ? error.message : String(error));
           throw error;
         }
       }
@@ -118,22 +129,22 @@ class AIProviderManager {
         try {
           console.log('🤖 Calling Together API...');
           
-          const response = await axios.post('https://api.together.xyz/v1/chat/completions', {
+          const response = await this.withTimeout(axios.post('https://api.together.xyz/v1/chat/completions', {
             model: 'meta-llama/Llama-3.2-3B-Instruct-Turbo',
             messages: [{ role: 'user', content: prompt }],
-            max_tokens: 500,
+            max_tokens: 400,
             temperature: 0.8
           }, {
             headers: {
               'Authorization': `Bearer ${process.env.TOGETHER_API_KEY}`,
               'Content-Type': 'application/json'
             }
-          });
+          }), 20000, 'Together request');
           
           console.log('✅ Together API response received');
           return response.data.choices[0].message.content;
         } catch (error) {
-          console.error('❌ Together API Error:', error.message);
+          console.error('❌ Together API Error:', error && error.message ? error.message : String(error));
           throw error;
         }
       }
@@ -153,22 +164,22 @@ class AIProviderManager {
         try {
           console.log('🤖 Calling Groq API...');
           
-          const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+          const response = await this.withTimeout(axios.post('https://api.groq.com/openai/v1/chat/completions', {
             model: 'llama3-8b-8192',
             messages: [{ role: 'user', content: prompt }],
-            max_tokens: 500,
+            max_tokens: 400,
             temperature: 0.8
           }, {
             headers: {
               'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
               'Content-Type': 'application/json'
             }
-          });
+          }), 20000, 'Groq request');
           
           console.log('✅ Groq API response received');
           return response.data.choices[0].message.content;
         } catch (error) {
-          console.error('❌ Groq API Error:', error.message);
+          console.error('❌ Groq API Error:', error && error.message ? error.message : String(error));
           throw error;
         }
       }
@@ -184,11 +195,11 @@ class AIProviderManager {
     return {
       name: 'Hugging Face',
       cost: 'free',
-      generate: async (prompt) => {
+    generate: async (prompt) => {
         try {
           console.log('🤖 Calling HuggingFace API...');
           
-          const response = await axios.post(
+      const response = await this.withTimeout(axios.post(
             'https://api-inference.huggingface.co/models/microsoft/DialoGPT-medium',
             { inputs: prompt },
             {
@@ -197,12 +208,12 @@ class AIProviderManager {
                 'Content-Type': 'application/json'
               }
             }
-          );
+      ), 20000, 'HuggingFace request');
           
           console.log('✅ HuggingFace API response received');
           return response.data[0]?.generated_text || "Response received but couldn't extract text.";
         } catch (error) {
-          console.error('❌ HuggingFace API Error:', error.message);
+      console.error('❌ HuggingFace API Error:', error && error.message ? error.message : String(error));
           throw error;
         }
       }

@@ -32,7 +32,7 @@ const MediaDisplay = ({ media, initialIndex = 0, onMediaChange }) => { // Added 
     if (mediaArray.length <= 1) return; // No next media if only one or zero
     const nextIndex = (currentMediaIndex + 1) % (mediaArray.length - (media.audio ? 1 : 0));  // Loop excluding audio
     setCurrentMediaIndex(nextIndex);
-    onMediaChange(nextIndex);
+    if (typeof onMediaChange === 'function') onMediaChange(nextIndex);
     if (mediaArray[nextIndex].type === 'video' && videoRef.current) {
       videoRef.current.pause(); // Pause previous video
     }

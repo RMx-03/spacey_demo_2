@@ -160,33 +160,39 @@ const DynamicLessonCanvas = ({
             <div className="block-component">
               {currentBlock.type === 'narration' && (
                 <NarrationBlock
-                  content={currentBlock.content}
-                  learningGoal={currentBlock.learning_goal}
-                  onContinue={goToNextBlock}
+                  block={currentBlock}
+                  onNavigate={(id) => {
+                    const idx = lesson.blocks.findIndex(b => b.block_id === id);
+                    if (idx !== -1) { setCurrentIndex(idx); onBlockChange(id); }
+                  }}
+                  getDynamicText={(dyn) => String(dyn || '')}
                 />
               )}
 
               {currentBlock.type === 'choice' && (
                 <ChoiceBlock
-                  content={currentBlock.content}
-                  choices={currentBlock.choices || []}
+                  block={currentBlock}
                   onChoice={handleChoice}
                 />
               )}
 
               {currentBlock.type === 'reflection' && (
                 <ReflectionBlock
-                  content={currentBlock.content}
-                  questions={currentBlock.reflection_questions || []}
-                  onReflectionComplete={goToNextBlock}
+                  block={currentBlock}
+                  onNavigate={(id) => {
+                    const idx = lesson.blocks.findIndex(b => b.block_id === id);
+                    if (idx !== -1) { setCurrentIndex(idx); onBlockChange(id); }
+                  }}
+                  getDynamicText={(dyn) => String(dyn || '')}
+                  backendAiMessage={null}
+                  isAiThinking={false}
                 />
               )}
 
               {currentBlock.type === 'quiz' && (
                 <QuizBlock
-                  content={currentBlock.content}
-                  questions={currentBlock.quiz_questions || []}
-                  onQuizComplete={goToNextBlock}
+                  block={{ questions: currentBlock.quiz_questions || currentBlock.questions || [] }}
+                  onComplete={goToNextBlock}
                 />
               )}
 
@@ -287,7 +293,7 @@ const DynamicLessonCanvas = ({
         </div>
       </div>
 
-      <style jsx>{`
+  <style>{`
         .dynamic-lesson-canvas {
           width: 100%;
           height: 100%;
@@ -561,7 +567,7 @@ const DynamicLessonCanvas = ({
           border-color: #4ecdc4;
           background: rgba(78, 205, 196, 0.3);
         }
-      `}</style>
+  `}</style>
     </div>
   );
 };

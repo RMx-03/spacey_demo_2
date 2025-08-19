@@ -3,12 +3,12 @@
 import React from 'react';
 import { ChevronRight } from 'lucide-react';
 
-const ChoiceBlock = ({ block, onChoice }) => {
+const ChoiceBlock = ({ block = {}, onChoice = () => {} }) => {
   return (
     <div className="animate-fade-in space-y-6">
-      <p className="text-lg text-gray-300 leading-relaxed">{block.content}</p>
+      <p className="text-lg text-gray-300 leading-relaxed">{block?.content || 'Make a selection to continue.'}</p>
       <div className="space-y-3">
-        {block.choices.map((choice, index) => (
+        {(Array.isArray(block?.choices) ? block.choices : []).map((choice, index) => (
           <button
             key={index}
             onClick={() => onChoice(choice)} // Pass the entire choice object

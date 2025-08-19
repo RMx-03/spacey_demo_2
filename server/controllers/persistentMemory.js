@@ -3,11 +3,12 @@ const path = require('path');
 const { knowledgeGraphManager } = require('./knowledgeGraphManager');
 
 class PersistentMemoryManager {
-  constructor(dataDir = './data/memory') {
-    this.dataDir = dataDir;
-    this.userProfilesDir = path.join(dataDir, 'profiles');
-    this.conversationsDir = path.join(dataDir, 'conversations');
-    this.analyticsDir = path.join(dataDir, 'analytics');
+  constructor(dataDir = null) {
+    // Anchor to server/data/memory so we don't write to repository root
+    this.dataDir = dataDir || path.join(__dirname, '..', 'data', 'memory');
+    this.userProfilesDir = path.join(this.dataDir, 'profiles');
+    this.conversationsDir = path.join(this.dataDir, 'conversations');
+    this.analyticsDir = path.join(this.dataDir, 'analytics');
     
     // Memory cache for performance
     this.userProfiles = new Map(); // userId -> profile data
@@ -36,7 +37,7 @@ class PersistentMemoryManager {
       await fs.mkdir(this.userProfilesDir, { recursive: true });
       await fs.mkdir(this.conversationsDir, { recursive: true });
       await fs.mkdir(this.analyticsDir, { recursive: true });
-      console.log('📁 Memory directories created/verified');
+  console.log(`📁 Memory directories created/verified at ${this.dataDir}`);
     } catch (error) {
       console.error('❌ Error creating memory directories:', error);
     }

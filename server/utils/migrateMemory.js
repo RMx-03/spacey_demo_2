@@ -194,7 +194,7 @@ class MemoryMigrationUtility {
       const fs = require('fs').promises;
       const path = require('path');
       
-      const backupDir = './data/backup';
+  const backupDir = require('path').join(__dirname, '..', 'data', 'backup');
       await fs.mkdir(backupDir, { recursive: true });
       
       const backupFile = path.join(backupDir, `memory_backup_${Date.now()}.json`);

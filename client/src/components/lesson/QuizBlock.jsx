@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { CheckCircle, XCircle, BrainCircuit, SkipForward } from 'lucide-react';
 
-const QuizBlock = ({ block, onComplete }) => {
+const QuizBlock = ({ block = { questions: [] }, onComplete = () => {} }) => {
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [selectedOption, setSelectedOption] = useState(null);
   const [isAnswered, setIsAnswered] = useState(false);
 
-  const currentQuestion = block.questions[currentQuestionIndex];
+  const questions = Array.isArray(block?.questions) ? block.questions : [];
+  const currentQuestion = questions[currentQuestionIndex] || { question_text: '...', options: [] };
 
   const handleOptionSelect = (option, index) => {
     if (isAnswered) return;
@@ -18,7 +19,7 @@ const QuizBlock = ({ block, onComplete }) => {
     setIsAnswered(false);
     setSelectedOption(null);
 
-    if (currentQuestionIndex < block.questions.length - 1) {
+  if (currentQuestionIndex < questions.length - 1) {
       setCurrentQuestionIndex(prev => prev + 1);
     } else {
       onComplete();
@@ -57,7 +58,7 @@ const QuizBlock = ({ block, onComplete }) => {
           Knowledge Check!
         </h2>
         <p className="font-mono text-sm text-gray-400 mt-2">
-          Question {currentQuestionIndex + 1} of {block.questions.length}
+          Question {currentQuestionIndex + 1} of {questions.length}
         </p>
       </div>
 
@@ -68,7 +69,7 @@ const QuizBlock = ({ block, onComplete }) => {
       
       {/* Options */}
       <div className="flex flex-col items-center justify-center gap-4 mt-8 w-full">
-        {currentQuestion.options.map((option, index) => (
+  {(Array.isArray(currentQuestion.options) ? currentQuestion.options : []).map((option, index) => (
           <button
             key={index}
             onClick={() => handleOptionSelect(option, index)}
@@ -88,8 +89,8 @@ const QuizBlock = ({ block, onComplete }) => {
       {/* Feedback */}
       {isAnswered && (
         <div className="mt-8 p-4 rounded-lg bg-black/40 animate-fade-in text-center">
-          <p className={`text-lg font-semibold ${currentQuestion.options[selectedOption].is_correct ? 'text-green-400' : 'text-red-400'}`}>
-            {currentQuestion.options[selectedOption].is_correct ? currentQuestion.correct_feedback : currentQuestion.incorrect_feedback}
+          <p className={`text-lg font-semibold ${(currentQuestion.options?.[selectedOption]?.is_correct ? 'text-green-400' : 'text-red-400')}`}>
+            {currentQuestion.options?.[selectedOption]?.is_correct ? currentQuestion.correct_feedback : currentQuestion.incorrect_feedback}
           </p>
         </div>
       )}
@@ -101,7 +102,7 @@ const QuizBlock = ({ block, onComplete }) => {
             onClick={handleNext}
             className="inline-flex items-center gap-3 px-8 py-3 font-semibold text-white bg-cyan-600 rounded-full hover:bg-cyan-500 transition-all duration-300 hover:scale-105 shadow-lg"
             >
-            <span>{currentQuestionIndex < block.questions.length - 1 ? 'Next Question' : 'Finish Quiz'}</span>
+            <span>{currentQuestionIndex < questions.length - 1 ? 'Next Question' : 'Finish Quiz'}</span>
             <SkipForward />
             </button>
         </div>

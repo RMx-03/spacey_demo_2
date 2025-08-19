@@ -157,7 +157,7 @@ class AIOrchestrator {
           const struggling = (profile.learning?.strugglingTopics || []).slice(-3);
           if (struggling.length) headerLines.push(`struggling_topics=${struggling.join(',')}`);
           header = headerLines.join('\n');
-        } catch {}
+        } catch {} // Ignore errors during header generation
         return [header, main, identity].filter(Boolean).join('\n\n—\n\n');
       })()
     ]);
@@ -170,7 +170,7 @@ class AIOrchestrator {
         const prof = await persistentMemory.getUserProfile(userId);
         identity = { ...identity, ...(prof.identity || {}) };
       }
-    } catch (_) {}
+    } catch (_) {} // Ignore errors during identity fetch
 
     return {
       // Original request data
@@ -244,7 +244,7 @@ class AIOrchestrator {
           if (ident?.timezone) facts.push(`Timezone: ${ident.timezone}`);
           if (Array.isArray(ident?.languages) && ident.languages.length) facts.push(`Languages: ${ident.languages.join(', ')}`);
           longTermFacts = facts.join('\n');
-        } catch (_) {}
+        } catch (_) {} // Ignore errors during fact generation
 
         const ragResult = await chain.invoke({
           input: prompt,
@@ -300,7 +300,7 @@ class AIOrchestrator {
         enhancedContext: context.enhancedContext || {},
         identity: context.identity || {}
       });
-    } catch {}
+    } catch {} // Ignore errors during strategy decision
 
     const chatPrompt = prompts.composeChatPrompt({
       userPrompt: prompt,
@@ -450,12 +450,10 @@ class AIOrchestrator {
       let out = String(text).trim();
       if (!hasHistory) return out;
       // Remove common greeting openers once, case-insensitive
-      out = out.replace(/^\s*(?:\*\*\s*)?(?:Greetings|Hello|Hi|Hey)[,!\.]\s*(?:[A-Z][a-zA-Z]+)?[,!\.]*\s*/i, '');
+      out = out.replace(/^\s*(?:\*\*\s*)?(?:Greetings|Hello|Hi|Hey)[,!.\s]*(?:[A-Z][a-zA-Z]+)?[,!.\s]*\s*/i, '');
       return out.trim();
-    } catch { return text; }
+    } catch { return text; } // Ignore errors during greeting stripping
   }
-
-  
 
   
 
@@ -647,7 +645,7 @@ class AIOrchestrator {
       const generatedLesson = await dynamicLessonGenerator.generateDynamicLesson(userId, lessonRequest);
 
       return {
-        message: `I've created a personalized lesson just for you! This ${generatedLesson.estimated_duration}-minute mission "${generatedLesson.title}" is designed specifically for your learning style and current knowledge level.`,
+        message: `I've created a personalized lesson just for you! This ${generatedLesson.estimated_duration}-minute mission "${generatedLesson.title}" is designed specifically for your learning style and current knowledge level.`, 
         type: 'dynamic_lesson_generation',
         lesson: generatedLesson,
         personalization: personalizationInsights,

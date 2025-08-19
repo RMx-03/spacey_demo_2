@@ -1,95 +1,14 @@
 const { aiProviderManager } = require('./aiProviders');
 const { persistentMemory } = require('./persistentMemory');
 const userProfileMemory = require('./userProfileMemory');
+const { parseAIJSONResponse, fixCommonJSONIssues } = require('../utils/jsonParser');
 
-/**
- * Helper function to clean and parse JSON responses from AI
- */
-function parseAIJSONResponse(response) {
-  try {
-    // First try direct parsing
-    return JSON.parse(response);
-  } catch (error) {
-    console.log('Direct JSON parse failed, trying extraction methods...');
-    
-    // If that fails, try to extract JSON from markdown blocks
-    const jsonMatch = response.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-    if (jsonMatch) {
-      try {
-        let jsonStr = jsonMatch[1].trim();
-        // Try to fix common JSON issues
-        jsonStr = fixCommonJSONIssues(jsonStr);
-        return JSON.parse(jsonStr);
-      } catch (innerError) {
-        console.error('Failed to parse extracted JSON:', innerError);
-        console.error('JSON content (first 500 chars):', jsonMatch[1].substring(0, 500));
-      }
-    }
-    
-    // Try to find JSON object in the response
-    const objectMatch = response.match(/\{[\s\S]*\}/);
-    if (objectMatch) {
-      try {
-        let jsonStr = objectMatch[0];
-        // Try to fix common JSON issues
-        jsonStr = fixCommonJSONIssues(jsonStr);
-        return JSON.parse(jsonStr);
-      } catch (innerError) {
-        console.error('Failed to parse extracted JSON object:', innerError);
-        console.error('JSON content (first 500 chars):', objectMatch[0].substring(0, 500));
-      }
-    }
-    
-    console.error('No valid JSON found in AI response (first 200 chars):', response.substring(0, 200));
-    throw new Error(`No valid JSON found in AI response`);
-  }
-}
+// Remove local helpers; using shared utils/jsonParser
 
 /**
  * Attempt to fix common JSON formatting issues
  */
-function fixCommonJSONIssues(jsonStr) {
-  // Remove any markdown code blocks
-  jsonStr = jsonStr.replace(/```json\s*/g, '').replace(/```\s*$/g, '');
-  
-  // Remove trailing commas in arrays and objects
-  jsonStr = jsonStr.replace(/,(\s*[}\]])/g, '$1');
-  
-  // Fix missing commas between array elements
-  jsonStr = jsonStr.replace(/"\s*\n\s*"/g, '",\n"');
-  jsonStr = jsonStr.replace(/}\s*\n\s*{/g, '},\n{');
-  jsonStr = jsonStr.replace(/]\s*\n\s*\[/g, '],\n[');
-  
-  // Fix unquoted property names
-  jsonStr = jsonStr.replace(/(\w+):/g, '"$1":');
-  
-  // Fix single quotes to double quotes
-  jsonStr = jsonStr.replace(/'/g, '"');
-  
-  // Remove comments
-  jsonStr = jsonStr.replace(/\/\/.*$/gm, '');
-  jsonStr = jsonStr.replace(/\/\*[\s\S]*?\*\//g, '');
-  
-  // Remove any trailing commas before closing brackets
-  jsonStr = jsonStr.replace(/,(\s*})/g, '$1');
-  jsonStr = jsonStr.replace(/,(\s*])/g, '$1');
-  
-  // Ensure proper bracket matching
-  const openBraces = (jsonStr.match(/{/g) || []).length;
-  const closeBraces = (jsonStr.match(/}/g) || []).length;
-  const openBrackets = (jsonStr.match(/\[/g) || []).length;
-  const closeBrackets = (jsonStr.match(/]/g) || []).length;
-  
-  // Add missing closing braces/brackets
-  if (openBraces > closeBraces) {
-    jsonStr += '}' .repeat(openBraces - closeBraces);
-  }
-  if (openBrackets > closeBrackets) {
-    jsonStr += ']'.repeat(openBrackets - closeBrackets);
-  }
-  
-  return jsonStr.trim();
-}
+// Remove local fixCommonJSONIssues; shared util is imported
 
 /**
  * Enhanced Personalization Engine - Provides deep user insights and personalization strategies
@@ -380,7 +299,14 @@ Generate comprehensive cognitive profile:
 
     try {
       const response = await aiProviderManager.generateResponse(cognitivePrompt, 'gemini');
-      return parseAIJSONResponse(response);
+      try {
+        return parseAIJSONResponse(response);
+      } catch (parseErr) {
+        // Last-chance cleanup and parse
+        const cleaned = fixCommonJSONIssues(String(response));
+        try { return JSON.parse(cleaned); } catch (_) {}
+        throw parseErr;
+      }
     } catch (error) {
       console.error('Error building cognitive profile:', error);
       return this.generateFallbackCognitiveProfile();
@@ -474,7 +400,13 @@ Generate adaptive strategies:
 
     try {
       const response = await aiProviderManager.generateResponse(strategiesPrompt, 'gemini');
-      return parseAIJSONResponse(response);
+      try {
+        return parseAIJSONResponse(response);
+      } catch (parseErr) {
+        const cleaned = fixCommonJSONIssues(String(response));
+        try { return JSON.parse(cleaned); } catch (_) {}
+        throw parseErr;
+      }
     } catch (error) {
       console.error('Error generating adaptive strategies:', error);
       return this.generateFallbackAdaptiveStrategies();

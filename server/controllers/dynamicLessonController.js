@@ -2,6 +2,7 @@ const { aiOrchestrator } = require('./aiOrchestrator');
 const { dynamicLessonGenerator } = require('./dynamicLessonGenerator');
 const { enhancedPersonalizationEngine } = require('./enhancedPersonalizationEngine');
 const { advancedTutoringStrategy } = require('./advancedTutoringStrategy');
+const { lessonSessionEngine } = require('./lessonSessionEngine');
 
 /**
  * Dynamic Lesson Controller - Handles all dynamic lesson generation and adaptive tutoring endpoints
@@ -355,5 +356,36 @@ module.exports = {
   getPersonalizationInsights,
   getTutoringStrategy,
   generateCustomLesson,
-  getLessonAdaptationSuggestions
+  getLessonAdaptationSuggestions,
+  // Session handlers
+  startTutoringSession: async (req, res) => {
+    try {
+      const { user, lessonRequest } = req.body;
+      if (!user?.id) return res.status(400).json({ error: 'User ID is required' });
+      const payload = await lessonSessionEngine.startSession(user, lessonRequest || {});
+      res.status(200).json({ success: true, ...payload });
+    } catch (e) {
+      res.status(500).json({ error: 'Failed to start session', details: e.message });
+    }
+  },
+  nextTutoringTurn: async (req, res) => {
+    try {
+      const { userId, missionId } = req.body;
+      if (!userId || !missionId) return res.status(400).json({ error: 'userId and missionId required' });
+      const payload = await lessonSessionEngine.nextTurn(userId, missionId);
+      res.status(200).json({ success: true, ...payload });
+    } catch (e) {
+      res.status(500).json({ error: 'Failed to get next turn', details: e.message });
+    }
+  },
+  submitTutoringResponse: async (req, res) => {
+    try {
+      const { userId, missionId, response } = req.body;
+      if (!userId || !missionId) return res.status(400).json({ error: 'userId and missionId required' });
+      const payload = await lessonSessionEngine.submitResponse(userId, missionId, response);
+      res.status(200).json({ success: true, ...payload });
+    } catch (e) {
+      res.status(500).json({ error: 'Failed to submit response', details: e.message });
+    }
+  },
 };
