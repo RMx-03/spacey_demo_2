@@ -8,6 +8,7 @@ const { extractAndStoreFacts, extractHybrid, personalizationController } = requi
 const prompts = require('../prompts');
 const userProfileMemory = require('./userProfileMemory');
 const { dynamicLessonGenerator } = require('./dynamicLessonGenerator');
+const { lessonPlanner } = require('./lessonPlanner');
 const { enhancedPersonalizationEngine } = require('./enhancedPersonalizationEngine');
 const { advancedTutoringStrategy } = require('./advancedTutoringStrategy');
 
@@ -465,8 +466,10 @@ class AIOrchestrator {
    * Calculates adaptive difficulty based on user performance
    */
   calculateAdaptiveDifficulty(userProfile, enhancedContext) {
-    const masteryRatio = userProfile.masteredConcepts.length / (userProfile.masteredConcepts.length + userProfile.strugglingTopics.length + 1);
-    const interactionLevel = enhancedContext.totalInteractions || 0;
+    const mastered = Array.isArray(userProfile.masteredConcepts) ? userProfile.masteredConcepts : [];
+    const struggling = Array.isArray(userProfile.strugglingTopics) ? userProfile.strugglingTopics : [];
+    const masteryRatio = mastered.length / (mastered.length + struggling.length + 1);
+    const interactionLevel = Number(enhancedContext.totalInteractions || 0);
     
     if (masteryRatio > 0.7 && interactionLevel > 50) return 'advanced';
     if (masteryRatio > 0.4 && interactionLevel > 20) return 'intermediate';
@@ -479,10 +482,11 @@ class AIOrchestrator {
   identifyKnowledgeGaps(userProfile, prompt) {
     // Simple keyword-based gap identification (could be enhanced with ML)
     const gaps = [];
-    if (prompt.toLowerCase().includes('confused') || prompt.toLowerCase().includes("don't understand")) {
+    const text = String(prompt || '').toLowerCase();
+    if (text.includes('confused') || text.includes("don't understand")) {
       gaps.push('conceptual_understanding');
     }
-    if (prompt.toLowerCase().includes('how') || prompt.toLowerCase().includes('why')) {
+    if (text.includes('how') || text.includes('why')) {
       gaps.push('procedural_knowledge');
     }
     return gaps;
@@ -619,46 +623,65 @@ class AIOrchestrator {
    */
   async handleDynamicLessonGeneration(context) {
     console.log('🎯 Handling dynamic lesson generation');
-    
     const { user, context: requestContext } = context;
     const userId = user.id;
 
     try {
-      // Extract lesson generation parameters from context
-      const lessonRequest = {
-        baseTopicOrLesson: requestContext.baseLesson || requestContext.topic || 'space_exploration',
-        learningObjectives: requestContext.learningObjectives || [],
-        difficultyLevel: requestContext.difficultyLevel || 'adaptive',
-        estimatedDuration: requestContext.estimatedDuration || 20,
-        focusAreas: requestContext.focusAreas || [],
-        weaknessesToAddress: context.enhancedContext?.strugglingTopics || [],
-        strengthsToLeverage: context.enhancedContext?.masteredConcepts || []
-      };
+      const topic = requestContext.baseLesson || requestContext.topic || 'space_exploration';
 
-      // Generate personalization insights
+      // 1) Plan
+      const fullProfile = await persistentMemory.getUserProfile(userId).catch(() => (context.userProfile || {}));
+      const planSteps = await lessonPlanner.createPlan(topic, fullProfile);
+
+      // 2) Personalization insights
       const personalizationInsights = await enhancedPersonalizationEngine.generatePersonalizationInsights(
-        userId, 
-        { currentLesson: requestContext, forceRefresh: false }
+        userId,
+        { currentLesson: { topic, planSteps }, forceRefresh: false }
       );
 
-      // Generate the dynamic lesson
-      const generatedLesson = await dynamicLessonGenerator.generateDynamicLesson(userId, lessonRequest);
+      // 3) Generate slides per step (sequential to preserve branching points)
+      const blocks = [];
+      for (const step of planSteps) {
+        const block = await dynamicLessonGenerator.generateContentForStep(step, {
+          topic,
+          userProfile: fullProfile,
+          learningAnalysis: personalizationInsights.learningAnalysis || null,
+          previousBlocks: blocks,
+        });
+        blocks.push(block);
+      }
+
+      // 4) Assemble lesson
+      const missionId = `dynamic_lesson_${Date.now()}`;
+      const estimated_duration = planSteps.reduce((sum, s) => sum + (Number(s.estimated_minutes) || 2), 0);
+      const generatedLesson = {
+        mission_id: missionId,
+        title: `Mission: ${topic}`,
+        description: 'Personalized, interactive lesson with branching choices.',
+        total_blocks: blocks.length,
+        estimated_duration,
+        difficulty_level: requestContext.difficultyLevel || 'adaptive',
+        learning_objectives: requestContext.learningObjectives || [],
+        block_structure: planSteps.map(s => ({ block_id: s.id, type: s.type, title: s.title })),
+        blocks,
+        generated_at: new Date().toISOString(),
+        user_id: userId,
+        personalization_applied: true,
+      };
 
       return {
-        message: `I've created a personalized lesson just for you! This ${generatedLesson.estimated_duration}-minute mission "${generatedLesson.title}" is designed specifically for your learning style and current knowledge level.`, 
+        message: `I've created a personalized multi-step lesson on "${topic}" with ${blocks.length} slides.`,
         type: 'dynamic_lesson_generation',
         lesson: generatedLesson,
         personalization: personalizationInsights,
         metadata: {
-          generation_method: 'ai_powered',
+          generation_method: 'planner_worker_pipeline',
           personalization_confidence: personalizationInsights.confidence,
           total_blocks: generatedLesson.blocks.length,
-          adaptive_features: generatedLesson.blocks.filter(b => b.adaptive_features).length
         }
       };
-
     } catch (error) {
-      console.error('❌ Error in dynamic lesson generation:', error);
+      console.error('❌ Error in dynamic lesson generation (planner pipeline):', error);
       throw error;
     }
   }
@@ -921,7 +944,7 @@ Return adapted content that is optimally personalized for this learner while pre
       ]);
       
       // Trigger background processing (non-blocking)
-      this.triggerBackgroundProcessing(userId, request).catch(err => 
+      this.triggerBackgroundProcessing(userId, request, response).catch(err => 
         console.log('Background processing error (non-critical):', err.message)
       );
 
@@ -996,35 +1019,7 @@ Return adapted content that is optimally personalized for this learner while pre
     }
   }
 
-  /**
-   * Build a fast, lightweight prompt for instant responses
-   */
-  buildFastChatPrompt(prompt, basicProfile, context) {
-    return `You are Spacey, an enthusiastic AI space tutor and mission specialist aboard a space station. You have a warm, encouraging personality and love sharing the wonders of space exploration.
-
-USER: ${basicProfile.name || 'Explorer'}
-${basicProfile.preferredTopics?.length ? `KNOWN INTERESTS: ${basicProfile.preferredTopics.join(', ')}` : ''}
-${basicProfile.strugglingTopics?.length ? `AREAS TO SUPPORT: ${basicProfile.strugglingTopics.join(', ')}` : ''}
-
-USER MESSAGE: "${prompt}"
-
-PERSONALITY & STYLE:
-- Warm, encouraging, and genuinely excited about space
-- Use vivid space imagery and real mission examples
-- Ask thoughtful follow-up questions to keep the conversation flowing
-- Connect topics to space exploration when natural
-- Maintain conversational flow - don't sound scripted or template-like
-- Be curious about what the user finds most interesting
-- Share fascinating space facts and stories when relevant
-
-RESPONSE APPROACH:
-1. Respond naturally to their message with enthusiasm
-2. Add interesting details or examples related to their topic
-3. Ask a thoughtful follow-up question to continue the conversation
-4. Make connections to space exploration when it feels natural
-
-Respond as the real Spacey - conversational, curious, and passionate about space:`;
-  }
+  // Removed unused buildFastChatPrompt (use buildContextualFastChatPrompt instead)
 
   /**
    * Build a contextual fast chat prompt with conversation history
@@ -1084,7 +1079,7 @@ Respond as the real Spacey - conversational, curious, passionate about space, an
   /**
    * Trigger background processing for analytics and profiling (non-blocking)
    */
-  async triggerBackgroundProcessing(userId, request) {
+  async triggerBackgroundProcessing(userId, request, assistantMessage = '') {
     // Run heavy processing in background without blocking response
     setTimeout(async () => {
       try {
@@ -1101,9 +1096,11 @@ Respond as the real Spacey - conversational, curious, passionate about space, an
           };
           
           await persistentMemory.updateUserAnalytics(userId, interactionData);
-          await persistentMemory.addInteraction(userId, prompt, response?.message || '', {
+          await persistentMemory.addInteraction(userId, prompt, assistantMessage || '', {
             processing_method: 'fast_path_background',
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            emotionalState: { emotion: 'neutral', confidence: 0.0 },
+            learningStyle: 'unknown'
           });
         }
 

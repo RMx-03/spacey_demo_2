@@ -212,12 +212,121 @@ function composeSummaryPrompt(transcript) {
   return `Summarize the following chat into 5–8 concise bullet points of durable facts and preferences about the user and ongoing tasks. Keep neutral tone.\n\n${transcript}`;
 }
 
+// --- Lesson Planner and Content Prompts ---
+
+function createLessonPlanPrompt({ topic, userProfile }) {
+  const profileLine = JSON.stringify({
+    learningStyle: userProfile?.learning?.preferredStyle || userProfile?.learningStyle || 'multimodal',
+    interests: userProfile?.learning?.preferredTopics || userProfile?.interests || [],
+    age: userProfile?.identity?.age || userProfile?.visual?.age || null,
+  });
+
+  return `CRITICAL: Return ONLY a valid JSON array. No markdown, no extra text.
+
+You are an expert instructional designer. Create a step-by-step lesson plan for the topic: "${topic}".
+Tailor the plan to the learner profile: ${profileLine}.
+
+Output strictly a JSON array of steps. Each step MUST be an object with:
+  {
+    "id": "unique_step_id",
+    "type": "narration|quiz|image|reflection|choice",
+    "title": "short title",
+    "objective": "learning objective for this step",
+    "estimated_minutes": 1-5
+  }
+
+Personalization rules:
+- Use learningStyle and interests to choose step types and pacing.
+- Insert strategic "choice" steps to create branching paths when motivation or curiosity could be boosted.
+- When a step has type "choice", include an additional field "options" with 2-3 options, each shaped as:
+  { "text": "option text", "next": "id_of_next_step" }
+
+Global constraints:
+- 8–12 steps for a ~20–25 minute lesson (adjust by estimated minutes).
+- Keep IDs short and unique (e.g., "intro", "orbit_quiz", "path_choice_1").
+- All keys quoted, no trailing commas, valid JSON ONLY.`;
+}
+
+function generateNarrationPrompt({ topic, step, userProfile }) {
+  const style = userProfile?.learning?.preferredStyle || userProfile?.learningStyle || 'multimodal';
+  const name = userProfile?.identity?.name || userProfile?.name || 'Explorer';
+  return `CRITICAL: Return ONLY valid JSON. No markdown.
+
+Generate a narration slide for a space-themed lesson.
+Topic: ${topic}
+Step: ${JSON.stringify({ id: step.id, title: step.title, objective: step.objective })}
+Learner: { name: "${name}", style: "${style}" }
+
+Return one JSON object with exactly these keys:
+{
+  "block_id": "${step.id}",
+  "type": "narration",
+  "title": "${step.title}",
+  "content": "3-4 short paragraphs of vivid, engaging narration tied to the objective",
+  "learning_goal": "${step.objective}",
+  "media": { "image": "/images/space_scene.png" },
+  "llm_instruction": "Tutor: be warm, concise, and adaptive to ${style} style",
+  "personalization": { "style_adapted": "how adapted to ${style}" }
+}`;
+}
+
+function generateQuizPrompt({ topic, step, userProfile }) {
+  const style = userProfile?.learning?.preferredStyle || userProfile?.learningStyle || 'multimodal';
+  return `CRITICAL: Return ONLY valid JSON. No markdown.
+
+Generate a single-question quiz slide that checks understanding succinctly.
+Topic: ${topic}
+Objective: ${step.objective}
+Title: ${step.title}
+
+Return one JSON object with keys:
+{
+  "block_id": "${step.id}",
+  "type": "quiz",
+  "title": "${step.title}",
+  "content": "1-2 sentences introducing the check-in",
+  "learning_goal": "${step.objective}",
+  "quiz": {
+    "question": "clear question",
+    "options": ["A", "B", "C", "D"],
+    "correctIndex": 0,
+    "explanations": ["why A", "why B is wrong", "why C is wrong", "why D is wrong"]
+  },
+  "llm_instruction": "Tutor: give brief feedback per choice; adapt to ${style}",
+  "media": { "image": null }
+}`;
+}
+
+function generateReflectionPrompt({ topic, step, userProfile }) {
+  const name = userProfile?.identity?.name || userProfile?.name || 'Explorer';
+  return `CRITICAL: Return ONLY valid JSON. No markdown.
+
+Generate a reflection slide that prompts metacognition.
+Topic: ${topic}
+Objective: ${step.objective}
+
+Return one JSON object with keys:
+{
+  "block_id": "${step.id}",
+  "type": "reflection",
+  "title": "${step.title}",
+  "content": "1-2 sentences inviting ${name} to reflect",
+  "learning_goal": "${step.objective}",
+  "prompts": ["prompt 1", "prompt 2", "prompt 3"],
+  "llm_instruction": "Tutor: acknowledge feelings, reinforce progress"
+}`;
+}
+
 module.exports = {
   composeChatPrompt,
   composeTutoringPrompt,
   composeAvatarPrompt,
   composeConversationalLessonPrompt,
   composeSummaryPrompt,
+  createLessonPlanPrompt,
+  generateNarrationPrompt,
+  generateQuizPrompt,
+  generateReflectionPrompt,
 };
 
 

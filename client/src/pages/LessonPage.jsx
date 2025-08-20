@@ -33,102 +33,26 @@ import { doc, setDoc, getDoc, Timestamp } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth'; // Listen for auth changes
 import CameraFeed from '../components/ui/CameraFeed';
 import { hasLessonAccess, isLessonCompleted, LESSON_METADATA } from '../utils/lessonProgression';
-import LessonGenerationStatus from '../components/lessons/LessonGenerationStatus';
 import DynamicLessonCanvas from '../components/lessons/DynamicLessonCanvas';
 
 
-// Enhanced lesson loading with dynamic generation support
-const fetchLessonData = async (lessonId, currentUser, forceStatic = false) => {
+// Always use dynamic generation for lessons
+const fetchLessonData = async (lessonId, currentUser) => {
   console.log(`🎯 Loading lesson: ${lessonId} for user: ${currentUser?.uid || 'anonymous'}`);
   
-  // Check for cached dynamic lesson first
-  if (lessonId.startsWith('dynamic_')) {
-    const cachedLesson = localStorage.getItem(`dynamic_lesson_${lessonId}`);
-    if (cachedLesson) {
-      try {
-        const parsedLesson = JSON.parse(cachedLesson);
-        console.log('📦 Loading cached dynamic lesson:', parsedLesson.title);
-        return parsedLesson;
-      } catch (error) {
-        console.warn('⚠️ Failed to parse cached lesson, will regenerate:', error);
-        localStorage.removeItem(`dynamic_lesson_${lessonId}`);
-      }
-    }
-  }
-  
-  // Check if we should use dynamic generation (DEFAULT TO TRUE for all lessons)
-  const dynamicGenerationDisabled = localStorage.getItem('disable_dynamic_lessons') === 'true';
-  const shouldUseDynamicGeneration = !forceStatic && !dynamicGenerationDisabled && currentUser?.uid && (
-    // Enable dynamic generation for ALL lessons by default
-    true || 
-    // Keep original logic as fallback options
-    lessonId.startsWith('dynamic_') || 
-    lessonId.includes('personalized') ||
-    lessonId.startsWith('enhanced_')
-  );
-
-  if (shouldUseDynamicGeneration) {
-    try {
-      console.log(`🔥 Generating dynamic lesson for ${lessonId}`);
-      const dynamicLesson = await generateDynamicLesson(lessonId, currentUser);
-      if (dynamicLesson) {
-        console.log('✅ Successfully generated dynamic lesson');
-        return dynamicLesson;
-      }
-    } catch (error) {
-      console.warn('⚠️ Dynamic lesson generation failed, trying enhanced static lesson:', error);
-    }
-  }
-
-  // Fallback 1: Try to load and enhance existing static lesson
+  // Always generate dynamically
   try {
-    const staticLesson = await loadStaticLesson(lessonId);
-    if (staticLesson) {
-      if (currentUser?.uid && !forceStatic) {
-        console.log(`🎨 Enhancing static lesson with personalization`);
-        try {
-          const enhancedLesson = await enhanceStaticLesson(staticLesson, currentUser);
-          if (enhancedLesson) {
-            console.log('✅ Successfully enhanced static lesson');
-            return enhancedLesson;
-          }
-        } catch (enhanceError) {
-          console.warn('⚠️ Enhancement failed, using plain static lesson:', enhanceError);
-        }
-      }
-      console.log('📄 Using static lesson as final fallback');
-      return staticLesson;
+    console.log(`🔥 Generating dynamic lesson for ${lessonId}`);
+    const dynamicLesson = await generateDynamicLesson(lessonId, currentUser);
+    if (dynamicLesson) {
+      console.log('✅ Successfully generated dynamic lesson');
+      return dynamicLesson;
     }
   } catch (error) {
-    console.error("Failed to load static lesson:", error);
+    console.error('❌ Dynamic lesson generation failed:', error);
   }
 
-  // Fallback 2: Last resort dynamic generation attempt
-  if (currentUser?.uid && !forceStatic) {
-    console.log(`🚀 Final attempt: Creating new dynamic lesson for ${lessonId}`);
-    try {
-      const finalDynamicLesson = await generateDynamicLesson(lessonId, currentUser);
-      if (finalDynamicLesson) {
-        console.log('✅ Final dynamic lesson generation succeeded');
-        return finalDynamicLesson;
-      }
-    } catch (genError) {
-      console.error("Final dynamic generation attempt failed:", genError);
-    }
-  }
-    
   return null;
-};
-
-// Load static lesson from JSON files
-const loadStaticLesson = async (lessonId) => {
-  try {
-    const lessonModule = await import(`../../public/lessons/${lessonId}.json`);
-    return lessonModule.default;
-  } catch (error) {
-    console.error(`Static lesson ${lessonId} not found:`, error);
-    return null;
-  }
 };
 
 // Generate completely new dynamic lesson
@@ -162,10 +86,14 @@ const generateDynamicLesson = async (lessonId, currentUser) => {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      user: {
+      user: currentUser?.uid ? {
         id: currentUser.uid,
         name: currentUser.displayName || currentUser.email || 'Explorer',
         email: currentUser.email || 'anonymous@example.com'
+      } : {
+        id: 'anon',
+        name: 'Explorer',
+        email: 'anonymous@example.com'
       },
       lessonRequest
     })
@@ -181,63 +109,7 @@ const generateDynamicLesson = async (lessonId, currentUser) => {
   return result.lesson;
 };
 
-// Enhance static lesson with personalization
-const enhanceStaticLesson = async (staticLesson, currentUser) => {
-  try {
-    console.log(`🎨 Enhancing lesson: ${staticLesson.title}`);
-    
-    const response = await fetch('/api/dynamic-lessons/adapt', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        user: {
-          id: currentUser.uid,
-          name: currentUser.displayName || currentUser.email || 'Explorer',
-          email: currentUser.email || 'anonymous@example.com'
-        },
-        currentLesson: staticLesson,
-        adaptationRequest: {
-          type: 'enhancement',
-          reason: 'Personalizing static lesson content'
-        }
-      })
-    });
-
-    if (response.ok) {
-      const result = await response.json();
-      if (result.adaptedContent || result.strategy) {
-        console.log('✅ Lesson enhanced with personalization');
-        
-        // Apply enhancements to the lesson
-        const enhancedLesson = { ...staticLesson };
-        
-        // Add personalization metadata
-        enhancedLesson.personalization_applied = true;
-        enhancedLesson.adaptation_strategy = result.strategy;
-        enhancedLesson.enhanced_at = new Date().toISOString();
-        
-        // Enhance blocks with personalized instructions if available
-        if (result.strategy?.actions?.immediate_actions) {
-          enhancedLesson.blocks = enhancedLesson.blocks.map(block => ({
-            ...block,
-            personalized_guidance: result.strategy.actions.immediate_actions.primary_action?.content,
-            tutoring_approach: result.strategy.methodology?.primary_methodology?.approach
-          }));
-        }
-        
-        return enhancedLesson;
-      }
-    }
-    
-    console.log('ℹ️ Enhancement API call failed, using static lesson');
-    return staticLesson;
-  } catch (error) {
-    console.warn('⚠️ Lesson enhancement failed:', error);
-    return staticLesson;
-  }
-};
+// Removed static lesson enhancement; dynamic is the only path
 
 const LessonPage = () => {
   const { lessonId } = useParams();
@@ -307,7 +179,7 @@ const LessonPage = () => {
       loadLessonProgress();
       loadPersistentUserTags();
     } else if (lessonId && !currentUser?.uid) {  // Only load from scratch if no user is logged in
-    loadLesson();
+  loadLesson();
   }
   }, [lessonId, currentUser?.uid]);
 
@@ -345,16 +217,9 @@ const LessonPage = () => {
     
     try {
       console.log(`🚀 Loading lesson ${lessonId} with enhanced AI system`);
+  setIsGeneratingLesson(true);
       
-      // Set generation status for dynamic lessons
-      const dynamicGenerationDisabled = localStorage.getItem('disable_dynamic_lessons') === 'true';
-      const shouldUseDynamic = !dynamicGenerationDisabled && currentUser?.uid;
-      
-      if (shouldUseDynamic) {
-        setIsGeneratingLesson(true);
-      }
-      
-      const data = await fetchLessonData(lessonId, currentUser);
+  const data = await fetchLessonData(lessonId, currentUser);
       
       if (data && data.blocks && data.blocks.length > 0) {
         console.log(`✅ Lesson loaded: ${data.title} (${data.blocks.length} blocks)`);
@@ -419,10 +284,10 @@ const LessonPage = () => {
         // You might also want to handle loading 'completed' status here.
         setCurrentMediaIndex(data.currentMediaIndex || 0); // Load media index
         setChatHistory(data.chatHistory || []);  // Load chat history
-        setLesson(await fetchLessonData(lessonId)); // Load lesson data after progress
+        setLesson(await fetchLessonData(lessonId, currentUser)); // Load lesson data after progress
       } else {
         // If no progress exists, load the lesson and start from the beginning.
-        const lessonData = await fetchLessonData(lessonId);
+        const lessonData = await fetchLessonData(lessonId, currentUser);
         if (lessonData && lessonData.blocks && lessonData.blocks.length > 0) {
           setLesson(lessonData);
           setCurrentBlockId(lessonData.blocks[0].block_id);
@@ -738,71 +603,20 @@ Format your response to include both immediate feedback and any trait analysis.`
   }, []);
 
   const renderLessonFlow = () => {
-    // Check if this is a dynamic lesson and use the canvas
-    if (lesson?.personalization_applied || lesson?.generated_at) {
-      return (
-        <DynamicLessonCanvas
-          lesson={lesson}
-          currentBlockId={currentBlockId}
-          onBlockChange={(blockId) => {
-            setCurrentBlockId(blockId);
-            saveLessonProgress(blockId, userTags, currentMediaIndex, chatHistory);
-          }}
-          onUserChoice={handleChoice}
-          onSendMessage={handleSendMessage}
-          chatHistory={chatHistory}
-        />
-      );
-    }
-
-    // Default lesson flow for static lessons
-    switch (pageState) {
-      case 'thinking':
-        return (
-          <div className="flex flex-col items-center justify-center gap-4 text-cyan-400/80 h-48 animate-fade-in">
-            <Loader size={48} className="animate-spin" />
-            <p className="font-mono">Analyzing your decision...</p>
-          </div>
-        );
-      case 'feedback':
-        return (
-          <AiFeedback 
-            message={backendAiMessage} 
-            onContinue={handleFeedbackComplete} 
-          />
-        );
-      case 'idle':
-      default:
-        if (!currentBlock) return null;
-        const augmentedBlock = { ...currentBlock };
-        if (
-          !augmentedBlock.next_block &&
-          (augmentedBlock.type === 'narration' || augmentedBlock.type === 'reflection' || augmentedBlock.type === 'quiz') &&
-          currentBlockIndex < lesson.blocks.length - 1
-        ) {
-          augmentedBlock.next_block = lesson.blocks[currentBlockIndex + 1].block_id;
-        }
-
-        switch (augmentedBlock.type) {
-          case 'narration':
-            // Mark lesson as complete for final blocks
-            if (augmentedBlock.block_id === "Debrief" || 
-                augmentedBlock.block_id === "Mission Complete" || 
-                !augmentedBlock.next_block) {
-              console.log('🎯 Triggering lesson completion for block:', augmentedBlock.block_id);
-              markLessonAsComplete();
-            }
-            return <NarrationBlock block={augmentedBlock} onNavigate={handleNavigate} getDynamicText={getDynamicText} userTags={userTags} />;
-          case 'choice':
-            return <ChoiceBlock block={currentBlock} onChoice={handleChoice} />;
-          case 'reflection':
-            return <ReflectionBlock block={augmentedBlock} onNavigate={handleNavigate} getDynamicText={getDynamicText} />;
-          case 'quiz':
-            return <QuizBlock block={augmentedBlock} onComplete={() => handleNavigate(augmentedBlock.next_block)} />;
-          default:
-            return <p>Unsupported block type: {currentBlock.type}</p>;
-        }
-    }
+    // Always render the dynamic lesson canvas
+    return (
+      <DynamicLessonCanvas
+        lesson={lesson}
+        currentBlockId={currentBlockId}
+        onBlockChange={(blockId) => {
+          setCurrentBlockId(blockId);
+          saveLessonProgress(blockId, userTags, currentMediaIndex, chatHistory);
+        }}
+        onUserChoice={handleChoice}
+        onSendMessage={handleSendMessage}
+        chatHistory={chatHistory}
+      />
+    );
   };
 
   const startLesson = useCallback(() => {
@@ -1069,27 +883,7 @@ Respond as if you're right there with the user during their mission.`;
         }
       />
 
-      {/* Show lesson generation status */}
-      {currentUser && (
-        <div className="relative z-10 container mx-auto px-4 pt-4">
-          <LessonGenerationStatus 
-            isGenerating={isGeneratingLesson}
-            onToggleDynamic={(enabled) => {
-              if (!enabled && lesson?.personalization_applied) {
-                // Reload lesson with static content
-                setIsLoading(true);
-                fetchLessonData(lessonId, currentUser, true).then(staticLesson => {
-                  if (staticLesson) {
-                    setLesson(staticLesson);
-                    setCurrentBlockId(staticLesson.blocks?.[0]?.block_id || null);
-                  }
-                  setIsLoading(false);
-                });
-              }
-            }}
-          />
-        </div>
-      )}
+  {/* Dynamic-only: removed generation toggle/status UI */}
       
       <DebugPanel 
         isOpen={isDebuggerOpen}

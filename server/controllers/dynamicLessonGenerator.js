@@ -3,6 +3,7 @@ const { persistentMemory } = require('./persistentMemory');
 const { parseAIJSONResponse, fixCommonJSONIssues } = require('../utils/jsonParser');
 const fs = require('fs').promises;
 const path = require('path');
+const prompts = require('../prompts');
 
 // Remove local helpers; using shared utils/jsonParser
 
@@ -15,6 +16,114 @@ class DynamicLessonGenerator {
     this.templateDir = path.join(__dirname, '../../client/public/lessons');
     this.generatedLessonsCache = new Map(); // userId -> generated lessons cache
     this.maxCacheSize = 100;
+  }
+
+  /**
+   * NEW: Generate content for a single plan step (Content Generator role)
+   * @param {Object} step - Plan step { id, type, title, objective, estimated_minutes, options? }
+   * @param {Object} options - Context options
+   * @param {string} options.topic - Overall lesson topic
+   * @param {Object} options.userProfile - Full user profile
+   * @param {Object} [options.learningAnalysis] - Optional learning analysis
+   * @param {Array} [options.previousBlocks] - Previously generated blocks for context
+   * @returns {Promise<Object>} Generated slide/block JSON
+   */
+  async generateContentForStep(step, { topic, userProfile, learningAnalysis = null, enhancedContext = null, previousBlocks = [], conversationSummary = '' } = {}) {
+    const type = String(step.type || 'narration').toLowerCase();
+    try {
+      if (type === 'choice') {
+        // Choice blocks are lightweight and primarily structural
+        const choices = Array.isArray(step.options) && step.options.length > 0
+          ? step.options.map(opt => ({
+              text: opt.text || 'Choose',
+              next_block: opt.next || null,
+              consequence: opt.consequence || null,
+              learning_value: opt.learning_value || null,
+              difficulty_level: learningAnalysis?.currentLevel || 'adaptive'
+            }))
+          : [
+              { text: 'Explore Path A', next_block: null, consequence: 'Different examples', learning_value: 'Application focus', difficulty_level: 'adaptive' },
+              { text: 'Explore Path B', next_block: null, consequence: 'Different examples', learning_value: 'Concept focus', difficulty_level: 'adaptive' }
+            ];
+        return {
+          block_id: step.id,
+          type: 'choice',
+          title: step.title,
+          content: 'Choose your next course of action to continue the mission.',
+          learning_goal: step.objective,
+          choices,
+          llm_instruction: 'Present options neutrally. After user selects, branch to indicated next block.',
+        };
+      }
+
+      if (type === 'image') {
+        // Simple non-LLM image block
+        return {
+          block_id: step.id,
+          type: 'image',
+          title: step.title,
+          content: step.objective,
+          learning_goal: step.objective,
+          media: { image: '/images/space_scene.png' },
+          llm_instruction: 'Use the image to anchor the brief explanation. Invite observation.',
+        };
+      }
+
+      // Use specialized prompts for narration, quiz, reflection
+      let prompt;
+      if (type === 'quiz') {
+        prompt = prompts.generateQuizPrompt({ topic, step, userProfile });
+      } else if (type === 'reflection') {
+        prompt = prompts.generateReflectionPrompt({ topic, step, userProfile });
+      } else {
+        prompt = prompts.generateNarrationPrompt({ topic, step, userProfile });
+      }
+
+      // Append active context to steer generation without changing expected JSON keys
+      const contextLines = [];
+      try {
+        if (learningAnalysis) contextLines.push(`learning_analysis=${JSON.stringify(learningAnalysis)}`);
+        if (enhancedContext) {
+          const slim = {
+            preferredTopics: enhancedContext.preferredTopics || [],
+            strugglingTopics: enhancedContext.strugglingTopics || [],
+            masteredConcepts: enhancedContext.masteredConcepts || [],
+            totalInteractions: enhancedContext.totalInteractions || 0,
+          };
+          contextLines.push(`enhanced_context=${JSON.stringify(slim)}`);
+        }
+        if (previousBlocks && previousBlocks.length > 0) {
+          const last = previousBlocks[previousBlocks.length - 1];
+          contextLines.push(`previous_block_summary=${JSON.stringify({ id: last.block_id, type: last.type, goal: last.learning_goal })}`);
+        }
+        if (conversationSummary) contextLines.push(`conversation_summary=${conversationSummary}`);
+      } catch (_) {}
+      if (contextLines.length) {
+        prompt += `\n\nACTIVE USER CONTEXT (for better personalization, do not echo):\n${contextLines.join('\n')}`;
+      }
+
+      const response = await aiProviderManager.generateResponse(prompt, 'gemini');
+      try {
+        const parsed = parseAIJSONResponse(response);
+        return parsed;
+      } catch (e) {
+        const cleaned = fixCommonJSONIssues(String(response));
+        return JSON.parse(cleaned);
+      }
+    } catch (error) {
+      console.error('Content generation error for step', step?.id, error.message);
+      // Fallback minimal block
+      return {
+        block_id: step.id,
+        type,
+        title: step.title,
+        content: `This slide covers: ${step.objective}`,
+        learning_goal: step.objective,
+        media: { image: '/images/mars_base_dark.png' },
+        llm_instruction: 'Provide supportive, encouraging guidance.',
+        error: 'Fallback content due to AI error',
+      };
+    }
   }
 
   /**

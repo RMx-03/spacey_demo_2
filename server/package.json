@@ -6,15 +6,15 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node index.js",
     "dev": "nodemon --ignore data/** --ignore ./data/** --ignore client/** --ignore node_modules/** index.js",
-  "smoke": "node scripts/smokeTest.js",
-  "test:parser": "node scripts/testJsonParser.js",
+    "smoke": "node scripts/smokeTest.js",
+    "test:parser": "node scripts/testJsonParser.js",
     "migrate": "node scripts/migrate.js",
     "migrate:verify": "node scripts/migrate.js --verify-only",
     "test:memory": "node scripts/testPersistentMemory.js",
     "build:concept-map": "node scripts/buildConceptMap.js",
     "rag:ingest": "node --experimental-modules scripts/ingestLessonsRAG.mjs",
-    "mem:backfill": "node scripts/backfillConversationMemory.js"
-  ,"data:consolidate": "node scripts/consolidateDataPaths.js"
+    "mem:backfill": "node scripts/backfillConversationMemory.js",
+    "data:consolidate": "node scripts/consolidateDataPaths.js"
   },
   "keywords": [],
   "author": "",

@@ -54,7 +54,9 @@ const chatWithAI = async (req, res) => {
 
         // Persist canonical id in cookie for cross-request continuity
         if (userId && !String(userId).startsWith('anonymous')) {
-            res.setHeader('Set-Cookie', `spacey_uid=${encodeURIComponent(userId)}; Path=/; HttpOnly; SameSite=Lax`);
+            const isSecure = (process.env.NODE_ENV || 'development') !== 'development';
+            const cookie = `spacey_uid=${encodeURIComponent(userId)}; Path=/; HttpOnly; SameSite=Lax${isSecure ? '; Secure' : ''}`;
+            res.setHeader('Set-Cookie', cookie);
         }
         console.log('👤 User ID:', userId);
         console.log('🎭 Request type:', type);

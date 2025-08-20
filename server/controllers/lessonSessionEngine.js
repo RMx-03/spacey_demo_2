@@ -4,6 +4,8 @@ const { enhancedPersonalizationEngine } = require('./enhancedPersonalizationEngi
 const { advancedTutoringStrategy } = require('./advancedTutoringStrategy');
 const { userAssessmentTracker } = require('./userAssessmentTracker');
 const { parseAIJSONResponse } = require('../utils/jsonParser');
+const { lessonPlanner } = require('./lessonPlanner');
+const { persistentMemory } = require('./persistentMemory');
 
 /**
  * LessonSessionEngine orchestrates a live tutoring session with:
@@ -22,32 +24,58 @@ class LessonSessionEngine {
   }
 
   async startSession(user, lessonRequest) {
-    // 1) Generate a lesson (uses personalization and tutoring enhancements internally)
-    const lesson = await dynamicLessonGenerator.generateDynamicLesson(user.id, lessonRequest || {});
+    // New pipeline: plan -> generate first block lazily
+    const topic = lessonRequest?.topic || lessonRequest?.baseLesson || 'space_exploration';
+    const userProfile = await persistentMemory.getUserProfile(user.id).catch(() => ({ identity: { name: user.name || 'Explorer' }, learning: {} }));
+    const planSteps = await lessonPlanner.createPlan(topic, userProfile);
 
-    // 2) Build session state
-    const missionId = lesson.mission_id;
+    const missionId = `dynamic_lesson_${Date.now()}`;
     const sessionId = this._sessionKey(user.id, missionId);
     const personalization = await enhancedPersonalizationEngine.generatePersonalizationInsights(user.id).catch(() => ({}));
+    const enhancedContext = await persistentMemory.generateEnhancedContext(user.id).catch(() => ({}));
+    const conversationSummary = await persistentMemory.summarizeContext(user.id).catch(() => '');
+
+    const firstBlock = await dynamicLessonGenerator.generateContentForStep(planSteps[0], {
+      topic,
+      userProfile,
+      learningAnalysis: personalization.learningAnalysis || null,
+      enhancedContext,
+      previousBlocks: [],
+      conversationSummary,
+    });
+
+    const lesson = {
+      mission_id: missionId,
+      title: `Mission: ${topic}`,
+      description: 'Interactive, personalized lesson with branching',
+      total_blocks: 1,
+      estimated_duration: (planSteps[0].estimated_minutes || 2),
+      difficulty_level: lessonRequest?.difficultyLevel || 'adaptive',
+      learning_objectives: lessonRequest?.learningObjectives || [],
+      blocks: [firstBlock],
+    };
 
     const state = {
       sessionId,
       user: { id: user.id, name: user.name || user.displayName || 'Explorer' },
       lesson,
       personalization,
+      enhancedContext,
+      conversationSummary,
+      topic,
+      userProfile,
+      plan: planSteps,
+      planIndexById: Object.fromEntries(planSteps.map((s, i) => [s.id, i])),
       blockIndex: 0,
       turnIndex: 0,
       turnsByBlock: new Map(), // blockIndex -> [{ say, question, meta }]
       startedAt: Date.now(),
       lastAssessment: null,
-      history: []
+      history: [],
     };
 
-    // 3) Precompute short tutor turns for the first block
     await this._ensureTurnsForBlock(state, 0);
     this.sessions.set(sessionId, state);
-
-    // 4) Return the first tutor turn
     return this._currentTurnPayload(state);
   }
 
@@ -61,8 +89,43 @@ class LessonSessionEngine {
       return this._currentTurnPayload(state);
     }
 
-    // Move to next block
-    if (blockIndex + 1 < state.lesson.blocks.length) {
+    // If current block is a choice, surface options and wait for submitResponse
+    if ((state.lesson.blocks[blockIndex]?.type || '').toLowerCase() === 'choice') {
+      return { ...this._currentTurnPayload(state), awaitingChoice: true, choices: state.lesson.blocks[blockIndex].choices || [] };
+    }
+
+    // Move or generate next block
+    const hasNextGenerated = blockIndex + 1 < state.lesson.blocks.length;
+    if (hasNextGenerated) {
+      state.blockIndex += 1;
+      state.turnIndex = 0;
+      await this._ensureTurnsForBlock(state, state.blockIndex);
+      return this._currentTurnPayload(state);
+    }
+
+    // Lazily generate next step from plan
+    const currentBlock = state.lesson.blocks[blockIndex];
+    const currentStepIdx = state.planIndexById[currentBlock.block_id] ?? blockIndex;
+    const nextStep = state.plan[currentStepIdx + 1];
+    if (nextStep) {
+      // Refresh personalization and context each step for dynamic behavior
+      const [personalization, enhancedContext, conversationSummary] = await Promise.all([
+        enhancedPersonalizationEngine.generatePersonalizationInsights(state.user.id).catch(() => state.personalization),
+        persistentMemory.generateEnhancedContext(state.user.id).catch(() => state.enhancedContext),
+        persistentMemory.summarizeContext(state.user.id).catch(() => state.conversationSummary),
+      ]);
+      state.personalization = personalization;
+      state.enhancedContext = enhancedContext;
+      state.conversationSummary = conversationSummary;
+      const nextBlock = await dynamicLessonGenerator.generateContentForStep(nextStep, {
+        topic: state.topic,
+        userProfile: state.userProfile,
+        learningAnalysis: state.personalization.learningAnalysis || null,
+        enhancedContext: state.enhancedContext,
+        previousBlocks: state.lesson.blocks,
+        conversationSummary: state.conversationSummary,
+      });
+      state.lesson.blocks.push(nextBlock);
       state.blockIndex += 1;
       state.turnIndex = 0;
       await this._ensureTurnsForBlock(state, state.blockIndex);
@@ -87,6 +150,47 @@ class LessonSessionEngine {
       hintUsage: 0,
     }).catch(() => null);
     state.lastAssessment = assessment;
+
+    // If awaiting a choice selection, branch generation
+    if ((block.type || '').toLowerCase() === 'choice') {
+      const selectionIndex = typeof userResponse === 'object' ? (userResponse.choiceIndex ?? null) : null;
+      const selectionText = typeof userResponse === 'object' ? (userResponse.choiceText ?? null) : null;
+      let chosen = null;
+      const choices = Array.isArray(block.choices) ? block.choices : [];
+      if (selectionIndex != null && choices[selectionIndex]) {
+        chosen = choices[selectionIndex];
+      } else if (selectionText) {
+        chosen = choices.find(c => (c.text || '').toLowerCase() === String(selectionText).toLowerCase());
+      }
+      const nextId = chosen?.next_block || null;
+      const nextIdx = nextId != null ? (state.planIndexById[nextId] ?? null) : null;
+      const planIdxFallback = (state.planIndexById[block.block_id] ?? state.blockIndex) + 1;
+      const nextStep = nextIdx != null ? state.plan[nextIdx] : state.plan[planIdxFallback];
+      if (nextStep) {
+        // Refresh personalization and context at branching point
+        const [personalization, enhancedContext, conversationSummary] = await Promise.all([
+          enhancedPersonalizationEngine.generatePersonalizationInsights(state.user.id).catch(() => state.personalization),
+          persistentMemory.generateEnhancedContext(state.user.id).catch(() => state.enhancedContext),
+          persistentMemory.summarizeContext(state.user.id).catch(() => state.conversationSummary),
+        ]);
+        state.personalization = personalization;
+        state.enhancedContext = enhancedContext;
+        state.conversationSummary = conversationSummary;
+        const nextBlock = await dynamicLessonGenerator.generateContentForStep(nextStep, {
+          topic: state.topic,
+          userProfile: state.userProfile,
+          learningAnalysis: state.personalization.learningAnalysis || null,
+          enhancedContext: state.enhancedContext,
+          previousBlocks: state.lesson.blocks,
+          conversationSummary: state.conversationSummary,
+        });
+        state.lesson.blocks.push(nextBlock);
+        state.blockIndex += 1;
+        state.turnIndex = 0;
+        await this._ensureTurnsForBlock(state, state.blockIndex);
+      }
+      return { branched: true, choice: chosen || null, ...this._currentTurnPayload(state) };
+    }
 
     // Generate brief, natural feedback and a micro-next step using LLM
     const feedbackPrompt = `Provide short natural tutor feedback and next action as JSON for this response.
@@ -186,6 +290,7 @@ Return ONLY JSON:
         question: turn.question,
         media: block.media || null,
       },
+      choices: (block.type || '').toLowerCase() === 'choice' ? (block.choices || []) : undefined,
       next_hint: block.llm_instruction ? 'Tutor will guide with short, supportive turns.' : null,
       done: false,
     };

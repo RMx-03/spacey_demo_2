@@ -1,4 +1,3 @@
-const { traitAnalyzer } = require('./traitAnalyzer');
 const { aiOrchestrator } = require('./aiOrchestrator');
 
 /**

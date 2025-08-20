@@ -247,28 +247,32 @@ class AIProviderManager {
     
     console.log(`🎯 Attempting to generate response with ${providerName || this.defaultProvider}`);
     
-    const targetProvider = providerName ? 
-      this.providers[providerName] : 
-      this.providers[this.defaultProvider];
-    
-    if (!targetProvider) {
-      const availableProviders = Object.keys(this.providers).filter(key => this.providers[key] !== null);
-      throw new Error(`Provider '${providerName || this.defaultProvider}' not available. Available providers: ${availableProviders.join(', ')}`);
+    // Build candidate providers list: preferred then fallbacks
+    const preferredKey = providerName || this.defaultProvider;
+    const availableKeys = Object.keys(this.providers).filter((k) => this.providers[k]);
+    if (availableKeys.length === 0) {
+      throw new Error('No AI providers are configured');
     }
-    
-    try {
-      console.log(`🚀 Using ${targetProvider.name} to generate response`);
-      const response = await targetProvider.generate(prompt);
-      console.log(`✅ Successfully generated response using ${targetProvider.name}`);
-      
-      // Cache the response
-      this.cacheResponse(cacheKey, response);
-      
-      return response;
-    } catch (error) {
-      console.error(`❌ ${targetProvider.name} failed:`, error.message);
-      throw new Error(`AI generation failed: ${error.message}`);
+    const orderedKeys = [preferredKey, ...availableKeys.filter((k) => k !== preferredKey)];
+
+    let lastErr = null;
+    for (const key of orderedKeys) {
+      const targetProvider = this.providers[key];
+      if (!targetProvider) continue;
+      try {
+        console.log(`🚀 Using ${targetProvider.name} to generate response`);
+        const response = await targetProvider.generate(prompt);
+        console.log(`✅ Successfully generated response using ${targetProvider.name}`);
+        // Cache and return
+        this.cacheResponse(cacheKey, response);
+        return response;
+      } catch (error) {
+        lastErr = error;
+        console.error(`❌ ${targetProvider?.name || key} failed:`, error.message);
+        // Try next provider
+      }
     }
+    throw new Error(`AI generation failed across providers: ${lastErr ? lastErr.message : 'unknown error'}`);
   }
 
   // Generate cache key from prompt and provider
